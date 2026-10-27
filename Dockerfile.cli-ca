@@ -1,0 +1,40 @@
+# Copyright © 2024-2026 杭州熵闪科技(Hangzhou Sunshine Technology Corporation). All rights reserved. https://www.purefect.cn
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Build in a minimal context containing only this file and gateway-ca.crt.
+# The base must be an approved native CLI image pinned by digest.
+ARG NATIVE_CLI_IMAGE
+FROM ${NATIVE_CLI_IMAGE}
+USER 0:0
+COPY gateway-ca.crt /usr/local/share/ca-certificates/sandlane-gateway.crt
+RUN node <<'NODE'
+const fs = require("node:fs");
+const { X509Certificate } = require("node:crypto");
+const { rootCertificates } = require("node:tls");
+const pem = fs.readFileSync("/usr/local/share/ca-certificates/sandlane-gateway.crt", "utf8");
+if (!/^\s*-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----\s*$/.test(pem)) {
+  throw Error("Expected one public CA certificate, without private keys or other data");
+}
+const ca = new X509Certificate(pem);
+if (!ca.ca || Date.parse(ca.validFrom) > Date.now() || Date.parse(ca.validTo) <= Date.now()) {
+  throw Error("Invalid CA certificate");
+}
+// Slim Node bases may lack update-ca-certificates and even a system bundle.
+// Preserve an existing bundle, otherwise use the pinned Node release's public roots.
+const bundle = "/etc/ssl/certs/ca-certificates.crt";
+const publicRoots = fs.existsSync(bundle) ? fs.readFileSync(bundle, "utf8") : rootCertificates.join("\n");
+fs.mkdirSync("/etc/ssl/certs", { recursive: true });
+fs.writeFileSync(bundle, publicRoots + "\n" + pem + "\n", { mode: 0o644 });
+NODE
+USER 1000:1000

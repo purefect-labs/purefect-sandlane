@@ -1,0 +1,133 @@
+# Copyright © 2024-2026 杭州熵闪科技(Hangzhou Sunshine Technology Corporation). All rights reserved. https://www.purefect.cn
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Local Docker Desktop deployment of the Purefect composition (Worker, Broker); no business writes.
+name: purefect-ai-runtime
+x-runtime: &runtime
+  image: purefect/ai-runtime:local
+  pull_policy: never
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  network_mode: none
+  pids_limit: 128
+  mem_limit: 256m
+  cpus: 1
+  stop_grace_period: 30s
+  restart: unless-stopped
+
+services:
+  init:
+    <<: *runtime
+    user: "0:0"
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    restart: "no"
+    command: [node, scripts/runtime-container-init.js]
+    volumes:
+      - broker-config:/config
+      - host-config:/host-config
+  broker:
+    <<: *runtime
+    build:
+      context: .
+      dockerfile: Dockerfile.runtime
+      args:
+        NODE_IMAGE: ${RUNTIME_NODE_IMAGE:?Set a pinned Node image digest}
+    # Docker Desktop's socket uses group 0. Linux must use its actual dedicated socket GID.
+    group_add: ["${RUNTIME_DOCKER_GID:-0}"]
+    depends_on:
+      init: {condition: service_completed_successfully}
+    environment:
+      SANDLANE_BROKER_NODE_ID: local-docker-1
+      SANDLANE_BROKER_DOCKER_SOCKET: /var/run/docker.sock
+      SANDLANE_BROKER_DOCKER_API_VERSION: v1.45
+      SANDLANE_BROKER_SOCKET: /control/broker.sock
+      SANDLANE_BROKER_STATE_DIR: /state
+      SANDLANE_BROKER_SERVICE_TOKEN_FILE: /config/broker-token
+      # Harness id -> pinned CLI image, e.g. {"codex":"...@sha256:...","claude-code":"...@sha256:..."}
+      SANDLANE_BROKER_RUN_IMAGES: ${RUNTIME_CLI_IMAGES:?Set the harness to pinned CLI image JSON map}
+      SANDLANE_BROKER_NETWORK_MODE: none
+      SANDLANE_BROKER_MAX_CONCURRENT: 5
+      SANDLANE_BROKER_PER_TENANT: 2
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - broker-state:/state
+      - broker-control:/control
+      - broker-config:/config:ro
+    healthcheck:
+      test: [CMD, node, scripts/runtime-container-health.js, broker]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Worker: control plane claim/sync/complete plus the in-process model and MCP gateways
+  # (credentials in memory only). Needs egress to the model service and the Engine, so it is not
+  # network_mode: none; the gateway ports are forwarded by the relay.
+  execution:
+    <<: *runtime
+    command: [node, dist/bin/worker.js]
+    network_mode: bridge
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    ports:
+      - "${SANDLANE_MODEL_GATEWAY_PORT:-19443}:${SANDLANE_MODEL_GATEWAY_PORT:-19443}"
+      - "${SANDLANE_TOOL_MCP_PORT:-19444}:${SANDLANE_TOOL_MCP_PORT:-19444}"
+      # Read-only status panel (docs/status-panel.md), published on the host's loopback only.
+      - "127.0.0.1:${SANDLANE_STATUS_PORT:-19445}:${SANDLANE_STATUS_PORT:-19445}"
+    mem_limit: 512m
+    pids_limit: 256
+    depends_on:
+      broker: {condition: service_healthy}
+    environment:
+      NODE_EXTRA_CA_CERTS: /host-config/engine-ca.pem
+      SANDLANE_RUNTIME_ID: ${SANDLANE_RUNTIME_ID:?Set the runtime id}
+      # Default: every tool (the former metadata.* tools no longer exist and failed startup).
+      SANDLANE_ENABLED_TOOLS: ${SANDLANE_ENABLED_TOOLS:-purefect_call,list_api_docs,read_api_doc,read_skill,workspace_action,propose_task,report_task}
+      SANDLANE_BROKER_SOCKET: /control/broker.sock
+      SANDLANE_BROKER_SERVICE_TOKEN_FILE: /host-config/broker-token
+      SANDLANE_BROKER_NODE_ID: local-docker-1
+      SANDLANE_MODEL_GATEWAY_BIND: 0.0.0.0
+      SANDLANE_MODEL_GATEWAY_PORT: ${SANDLANE_MODEL_GATEWAY_PORT:-19443}
+      SANDLANE_MODEL_GATEWAY_HOSTNAME: ${SANDLANE_MODEL_GATEWAY_HOSTNAME:-sandlane-model.local}
+      SANDLANE_MODEL_GATEWAY_TLS_KEY_FILE: /secrets/gateway-key.pem
+      SANDLANE_MODEL_GATEWAY_TLS_CERT_FILE: /secrets/gateway.pem
+      SANDLANE_TOOL_MCP_BIND: 0.0.0.0
+      SANDLANE_TOOL_MCP_PORT: ${SANDLANE_TOOL_MCP_PORT:-19444}
+      SANDLANE_TOOL_MCP_HOSTNAME: ${SANDLANE_TOOL_MCP_HOSTNAME:-sandlane-mcp.local}
+      SANDLANE_TOOL_MCP_TLS_KEY_FILE: /secrets/gateway-key.pem
+      SANDLANE_TOOL_MCP_TLS_CERT_FILE: /secrets/gateway.pem
+      # Status panel: off while SANDLANE_STATUS_PORT is empty. Inside the container it listens on
+      # all interfaces so the port mapping above (host loopback only) can reach it.
+      SANDLANE_STATUS_PORT: ${SANDLANE_STATUS_PORT:-}
+      SANDLANE_STATUS_BIND: 0.0.0.0
+      SANDLANE_STATUS_RUN_IDS: ${SANDLANE_STATUS_RUN_IDS:-hash}
+      PUREFECT_ENGINE_ORIGIN: ${PUREFECT_ENGINE_ORIGIN:?Set the Engine HTTPS origin}
+      PUREFECT_CONTROL_SITE: ${PUREFECT_CONTROL_SITE:?Set the control site}
+      PUREFECT_CONTROL_TENANT: ${PUREFECT_CONTROL_TENANT:?Set the control tenant}
+      PUREFECT_SERVICE_PRINCIPAL: ${PUREFECT_SERVICE_PRINCIPAL:?Set the service principal id}
+      PUREFECT_SERVICE_SECRET_FILE: /secrets/service-secret
+      PUREFECT_INSTRUCTION_PROFILE: ${PUREFECT_INSTRUCTION_PROFILE:-business}
+      PUREFECT_CLIENT_MODULE: /opt/purefect-client/lib/purefect_client.js
+    volumes:
+      - broker-control:/control:ro
+      - host-config:/host-config:ro
+      - execution-secrets:/secrets:ro
+      - ${PUREFECT_CLIENT_DIR:?Set the purefect-client checkout}:/opt/purefect-client:ro
+
+volumes:
+  execution-secrets:
+  broker-state:
+  broker-control:
+  broker-config:
+  host-config:

@@ -1,0 +1,7 @@
+{
+  "protocol": "purefect-ai-execution/1",
+  "lease_until": 1760000030000,
+  "cancel": true,
+  "event_offset": 1,
+  "action_receipts": []
+}

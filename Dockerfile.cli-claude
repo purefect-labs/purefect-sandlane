@@ -1,0 +1,66 @@
+# Copyright © 2024-2026 杭州熵闪科技(Hangzhou Sunshine Technology Corporation). All rights reserved. https://www.purefect.cn
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Native Claude Code CLI only. Driver, Broker and Worker code remain outside this image.
+# Claude Code is Anthropic's software under its own terms (see docs/claude-code.md); this file
+# only installs the unmodified release you pin.
+# Gateway CA: build Dockerfile.cli-ca on top of this image, as for Codex.
+ARG NODE_IMAGE=node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6
+FROM ${NODE_IMAGE}
+ARG CLAUDE_CODE_VERSION
+ARG TARGETARCH
+COPY LICENSE NOTICE /usr/share/doc/purefect-sandlane/
+# The platform package carries the native binary. The wrapper package would need its install
+# script to place it (with --ignore-scripts it leaves only a placeholder), so no package script
+# runs here. The version check proves a working binary, not a placeholder.
+RUN node -e 'if (!/^\d+\.\d+\.\d+$/.test(process.argv[1])) process.exit(1)' "$CLAUDE_CODE_VERSION" \
+    && case "$TARGETARCH" in \
+         amd64) arch=x64 ;; \
+         arm64) arch=arm64 ;; \
+         *) echo "Unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+       esac \
+    && npm install --global --ignore-scripts "@anthropic-ai/claude-code-linux-$arch@$CLAUDE_CODE_VERSION" \
+    && chmod 0755 "/usr/local/lib/node_modules/@anthropic-ai/claude-code-linux-$arch/claude" \
+    && ln -s "/usr/local/lib/node_modules/@anthropic-ai/claude-code-linux-$arch/claude" /usr/local/bin/claude \
+    && HOME=/tmp/claude-version CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 /usr/local/bin/claude --version \
+       | grep -qF "$CLAUDE_CODE_VERSION" \
+    && rm -rf /tmp/claude-version \
+    && npm cache clean --force
+# Document tools for conversation files (file mode): python3 with pinned libraries, installed at
+# build time into the system site-packages. The sandbox has no network (nothing can be installed
+# at run time) and a read-only root filesystem: matplotlib writes its cache under the /tmp tmpfs,
+# and Python never writes bytecode next to the sources. Keep this list identical in
+# Dockerfile.cli and Dockerfile.cli-claude (test/architecture.test.js checks it).
+ARG PYTHON_DOC_TOOLS="pypdf==5.4.0 pdfplumber==0.11.6 openpyxl==3.1.5 pandas==2.2.3 numpy==2.2.4 python-pptx==1.0.2 python-docx==1.1.2 matplotlib==3.10.1"
+# Optional build-time mirrors (same as Dockerfile.cli); empty keeps the upstream sources.
+ARG APT_MIRROR=""
+ARG PIP_INDEX_URL=""
+RUN if [ -n "$APT_MIRROR" ]; then cp /etc/apt/sources.list.d/debian.sources /tmp/debian.sources \
+        && sed -i "s#http://deb.debian.org#${APT_MIRROR}#g" /etc/apt/sources.list.d/debian.sources; fi \
+    && apt-get update \
+    && apt-get install --yes --no-install-recommends python3 python3-pip \
+    && pip3 install --no-cache-dir --break-system-packages --only-binary=:all: \
+        ${PIP_INDEX_URL:+--index-url "$PIP_INDEX_URL"} $PYTHON_DOC_TOOLS \
+    && if [ -n "$APT_MIRROR" ]; then mv /tmp/debian.sources /etc/apt/sources.list.d/debian.sources; fi \
+    && apt-get purge --yes --auto-remove python3-pip \
+    && rm -rf /var/lib/apt/lists/* /root/.cache \
+    && MPLCONFIGDIR=/tmp/mpl-build python3 -c "import pypdf, pdfplumber, openpyxl, pandas, pptx, docx, matplotlib.pyplot" \
+    && rm -rf /tmp/mpl-build
+ENV MPLCONFIGDIR=/tmp/matplotlib MPLBACKEND=Agg PYTHONDONTWRITEBYTECODE=1
+LABEL cn.purefect.sandlane.harness="claude-code" cn.purefect.sandlane.cli-version="${CLAUDE_CODE_VERSION}"
+WORKDIR /workspace
+USER 1000:1000
+# Run read-only with writable /tmp and CLAUDE_CONFIG_DIR only; the Broker supplies all arguments.
+ENTRYPOINT ["/usr/local/bin/claude"]
+CMD ["--version"]

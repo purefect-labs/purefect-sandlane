@@ -1,0 +1,372 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "purefect-ai-execution/1",
+  "title": "Purefect AI 执行契约（Engine ↔ Worker）",
+  "description": "Worker 以 SERVICE 主体调用 PAPI：POST /papi/{site}/{tenant}/pf.ai.worker.ExecutionDomain::{claim|sync|output|propose|complete}，请求头 X-Purefect-Service-Token: <id>:<secret>，响应为平台统一 Response（data 为下列响应体）。ID 一律为十进制字符串。平台序列化会省略空数组（如 leases、action_receipts、history），读取方按空数组处理。",
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[0-9]{1,19}$" },
+    "identifier": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$" },
+    "claimToken": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{32,128}$",
+      "description": "Worker 生成的高强度随机串，同时作为租约凭证；同一凭证重试 claim 返回同一批作业。"
+    },
+    "proof": {
+      "type": "object",
+      "required": ["job_id", "generation", "claim_token"],
+      "properties": {
+        "job_id": { "$ref": "#/$defs/id" },
+        "generation": { "type": "integer", "minimum": 1 },
+        "claim_token": { "$ref": "#/$defs/claimToken" }
+      }
+    },
+    "secret": {
+      "type": "object",
+      "required": ["value", "expires_at"],
+      "properties": {
+        "value": { "type": "string" },
+        "expires_at": { "type": "integer", "description": "毫秒时间戳" }
+      }
+    },
+
+    "claimRequest": {
+      "type": "object",
+      "required": ["runtime_id", "lanes", "claim_token"],
+      "properties": {
+        "runtime_id": { "$ref": "#/$defs/identifier" },
+        "lanes": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "$ref": "#/$defs/identifier" } },
+        "claim_token": { "$ref": "#/$defs/claimToken" },
+        "max_jobs": { "type": "integer", "minimum": 1, "maximum": 10, "default": 1 },
+        "wait_ms": { "type": "integer", "minimum": 0, "description": "长轮询最长等待；Engine 上限 25000" }
+      }
+    },
+    "claimResponse": {
+      "type": "object",
+      "required": ["protocol", "leases"],
+      "properties": {
+        "protocol": { "const": "purefect-ai-execution/1" },
+        "leases": { "type": "array", "items": { "$ref": "#/$defs/lease" } }
+      }
+    },
+    "lease": {
+      "type": "object",
+      "required": ["job_id", "generation", "lease_until", "deadline_at", "run", "credentials"],
+      "properties": {
+        "job_id": { "$ref": "#/$defs/id" },
+        "generation": { "type": "integer" },
+        "lease_until": { "type": "integer" },
+        "deadline_at": { "type": "integer" },
+        "run": {
+          "type": "object",
+          "required": ["run_id", "tenant_id", "conversation_id", "execution_profile", "identity", "input", "input_digest"],
+          "properties": {
+            "run_id": { "$ref": "#/$defs/id" },
+            "tenant_id": { "$ref": "#/$defs/id" },
+            "conversation_id": { "$ref": "#/$defs/id" },
+            "run_no": { "type": "integer" },
+            "source": {
+              "type": "object",
+              "required": ["type"],
+              "description": "Run 的来源。conversation：用户对话，可以用 propose_task 提议任务（须同时有 input.mentions）；task：派单服务派给数字员工的任务，用 report_task 回报结果（ref 为任务 id）。缺省时两个任务工具都不提供",
+              "properties": {
+                "type": { "enum": ["conversation", "task", "todo", "schedule", "mail"] },
+                "ref": { "type": "string" }
+              }
+            },
+            "execution_profile": { "enum": ["sandbox"] },
+            "harness": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$", "description": "执行该 Run 的 Agent CLI（如 codex、claude-code），按执行档案冻结；缺省为 codex" },
+            "tools": {
+              "type": "array",
+              "maxItems": 50,
+              "description": "可选：本 Run 可用的工具（按成员智能体配置收紧，提交时冻结）。Worker 取它与自身启用工具的交集，只能收紧；缺省表示 Worker 的全部工具",
+              "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" }
+            },
+            "confirm_api_codes": {
+              "type": "array",
+              "maxItems": 200,
+              "description": "需要用户确认后才执行的平台接口编码（* 通配），提交时冻结；缺省或为空表示全部直接执行。确认经页面动作通道以 op=confirm 发给浏览器",
+              "items": { "type": "string", "pattern": "^[A-Za-z0-9_.:*-]{1,200}$" }
+            },
+            "file_tools": { "type": "boolean", "description": "可选：文件模式（CLI 可读写 /workspace、执行命令，生成的文件放 /workspace/outputs）。缺省时按是否有 credentials.files 判断" },
+            "web_access": {
+              "type": "object",
+              "description": "联网访问策略（提交时冻结）。open=true 可访问任意网站；false 时只允许 allowed_domains（含子域名），为空即不能联网。缺省视为不能联网",
+              "required": ["open", "allowed_domains"],
+              "properties": {
+                "open": { "type": "boolean" },
+                "allowed_domains": { "type": "array", "maxItems": 100, "items": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", "maxLength": 253 } }
+              }
+            },
+            "identity": {
+              "type": "object",
+              "required": ["user_id", "tenant_code", "site"],
+              "properties": {
+                "user_id": { "$ref": "#/$defs/id" },
+                "tenant_access_id": { "$ref": "#/$defs/id", "description": "租户成员标识（t_aid）" },
+                "tenant_code": { "type": "string" },
+                "site": { "type": "string" }
+              }
+            },
+            "input": {
+              "type": "object",
+              "required": ["prompt", "history"],
+              "properties": {
+                "prompt": { "type": "string" },
+                "ui_context": { "type": "object" },
+                "mentions": {
+                  "type": "array",
+                  "maxItems": 10,
+                  "description": "可选：本条消息提及的成员（用户在输入框选人浮层中选中、Engine 确认是本租户在职内部成员），按出现顺序。提及只是指向某人，本身不派活",
+                  "items": {
+                    "type": "object",
+                    "required": ["member_id", "name"],
+                    "properties": {
+                      "member_id": { "$ref": "#/$defs/id" },
+                      "name": { "type": "string", "maxLength": 128 },
+                      "is_digital": { "type": "boolean", "description": "是否数字员工" }
+                    }
+                  }
+                },
+            "instructions": { "type": "string", "description": "可选：成员智能体配置合成的指导（岗位职责、工作指令或个人偏好、技能索引），提交时冻结；业务对话中 Worker 将其作为带标签的小节并入平台系统指令（不授予任何权限），未配置系统指令时作为上下文数据。技能正文由模型用 read_skill 按需读取" },
+                "history": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["role", "content"],
+                    "properties": { "role": { "enum": ["user", "assistant"] }, "content": { "type": "string" } }
+                  }
+                }
+              }
+            },
+            "input_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        },
+        "credentials": {
+          "type": "object",
+          "description": "只放在 Worker 网关内存中，不进沙箱、不写日志。",
+          "required": ["agent_token", "model_service"],
+          "properties": {
+            "agent_token": { "$ref": "#/$defs/secret", "description": "执行人短期令牌（≤60 秒），每次 sync 续发" },
+            "model_service": {
+              "type": "object",
+              "required": ["base_uri", "wire_api", "model", "api_key"],
+              "properties": {
+                "base_uri": { "type": "string", "pattern": "^https://" },
+                "wire_api": { "enum": ["responses", "anthropic-messages"], "description": "上游模型协议，须与 harness 使用的协议一致" },
+                "model": { "type": "string", "description": "按通道冻结的模型名，未覆盖时为 connector 的 default_model" },
+                "reasoning_effort": { "enum": ["low", "medium", "high"], "description": "按通道冻结的推理强度；缺省时由 Worker 决定" },
+                "api_key": { "type": "string" }
+              }
+            },
+            "files": {
+              "type": "array",
+              "maxItems": 200,
+              "description": "可选：本会话的文件（上传的与生成的），从新到旧。loaded=true 的带短期签名地址，Worker 下载后放进沙箱 /workspace/inputs；地址与令牌同等保护，不进沙箱、不写日志",
+              "items": {
+                "type": "object",
+                "required": ["file_id", "name", "loaded"],
+                "properties": {
+                  "file_id": { "type": "string", "maxLength": 64 },
+                  "name": { "type": "string", "maxLength": 512 },
+                  "content_type": { "type": "string" },
+                  "size": { "type": "integer", "minimum": 0 },
+                  "relation": { "enum": ["input", "output", "attachment"] },
+                  "loaded": { "type": "boolean" },
+                  "url": { "type": "string", "pattern": "^https://" },
+                  "expires_at": { "type": "integer" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "syncRequest": {
+      "allOf": [{ "$ref": "#/$defs/proof" }],
+      "type": "object",
+      "properties": {
+        "started": { "type": "boolean", "description": "交付输入之后、启动执行之前上报一次；之后租约过期即视为结果不确定" },
+        "offset": { "type": "integer", "minimum": 0, "description": "events 中第一条事件的连续偏移；重发的前缀会被跳过，出现空洞返回 ai_event_offset_gap" },
+        "events": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": { "enum": ["assistant.message.delta", "runtime.item.started", "runtime.item.completed", "runtime.approval.denied", "plan.updated", "plan.delta", "task.reported"], "description": "task.reported 只接受 run.source.type=task 的 Run，data 为 {status: done|needs_input|failed, summary（≤2000，超长截断）}，其余字段丢弃；Run 成功结束时以最后一次回报回写任务" },
+              "data": { "type": "object" }
+            }
+          }
+        },
+        "action_requests": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "required": ["action_id", "op"],
+            "properties": {
+              "action_id": { "$ref": "#/$defs/identifier" },
+              "op": { "enum": ["open", "close", "describe", "focus", "query", "read", "create", "patch", "invoke", "confirm"], "description": "页面动作操作（实际开放的由 workspace-operations 决定）；confirm 为审批桥接" },
+              "arguments": { "type": "object" }
+            }
+          }
+        },
+        "awaiting_actions": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/identifier" } },
+        "wait_ms": { "type": "integer", "minimum": 0, "description": "awaiting_actions 都未回执时最长等待；Engine 上限 10000" }
+      }
+    },
+    "syncResponse": {
+      "type": "object",
+      "required": ["protocol", "lease_until", "cancel", "event_offset", "action_receipts"],
+      "if": { "properties": { "cancel": { "const": false } } },
+      "then": { "required": ["agent_token"] },
+      "properties": {
+        "protocol": { "const": "purefect-ai-execution/1" },
+        "lease_until": { "type": "integer" },
+        "cancel": { "type": "boolean", "description": "true 时 Worker 必须停止执行并以 CANCELLED 结算" },
+        "event_offset": { "type": "integer", "description": "Engine 已接受的事件数，即下一次上报的 offset" },
+        "action_receipts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["action_id", "status"],
+            "properties": {
+              "action_id": { "type": "string" },
+              "status": { "enum": ["SETTLED", "VOID"] },
+              "receipt": { "type": "object" }
+            }
+          }
+        },
+        "agent_token": {
+          "$ref": "#/$defs/secret",
+          "description": "cancel=false 时必带。Run 主体失去业务准入（成员停用、改为外部）时 Engine 以 cancel=true 下发并省略本字段：不再续发，Worker 立即丢弃手上的令牌并终止执行"
+        }
+      }
+    },
+
+    "outputRequest": {
+      "allOf": [{ "$ref": "#/$defs/proof" }],
+      "type": "object",
+      "required": ["path", "name"],
+      "description": "结算前逐个上报 /workspace/outputs 中的生成文件：content_base64 与 rejected 二选一。平台以 Run 主人身份保存（用途 ai_output），绑定会话（任务来源时同时绑定任务），并追加 run.file.created；rejected 时追加 run.file.rejected。每个 Run 最多 10 个输出",
+      "properties": {
+        "path": { "type": "string", "pattern": "^outputs/[^/]{1,80}$", "description": "沙箱内相对路径，用于把回答里的链接换成文件卡片" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "content_type": { "type": "string", "maxLength": 128 },
+        "content_base64": { "type": "string", "description": "文件内容（单个不超过 10 MiB）" },
+        "rejected": { "enum": ["too_large", "too_many", "type_not_allowed", "content_mismatch", "macro", "not_regular_file", "invalid_name", "upload_failed"] }
+      }
+    },
+    "outputResponse": {
+      "type": "object",
+      "required": ["protocol"],
+      "properties": {
+        "protocol": { "const": "purefect-ai-execution/1" },
+        "file_id": { "type": "string" },
+        "name": { "type": "string" },
+        "content_type": { "type": "string" },
+        "size": { "type": "integer" }
+      }
+    },
+
+    "proposeRequest": {
+      "allOf": [{ "$ref": "#/$defs/proof" }],
+      "type": "object",
+      "required": ["request_id", "assignee_member_id", "title"],
+      "description": "propose_task：对话 Run 执行中提议一项任务。负责人必须在 run.input.mentions 中；是数字员工时以发起人身份立即建任务并派单，是真人时在会话里生成待用户确认的建议卡片（task.proposed）。带 trigger_type 时是定时 / 周期任务或收到邮件触发：不论派给谁都只生成建议卡片（kind=plan），用户确认后建计划。trigger_type=mail 时 mail_senders 必填（真人计划也一样），不能带时间规则字段与 due_at；执行方式由平台固定为先确认再执行，请求里带 mail_mode、mode 或 event_config 一律报 task_plan_invalid。同一 request_id 重发返回同一结果",
+      "properties": {
+        "request_id": { "$ref": "#/$defs/identifier" },
+        "assignee_member_id": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 4000 },
+        "due_at": { "description": "截止时间：13 位毫秒数或 yyyy-MM-dd HH:mm（服务器时区）", "type": ["string", "integer"] },
+        "review_required": { "type": "boolean" },
+        "trigger_type": { "enum": ["once", "recurring", "mail"], "description": "可选：有值即定时 / 周期任务或收到邮件触发（建议卡片，确认后建计划）" },
+        "run_at": { "description": "once：执行时间，13 位毫秒数或 yyyy-MM-dd HH:mm", "type": ["string", "integer"] },
+        "repeat_rule": { "enum": ["daily", "weekdays", "weekly", "monthly", "cron"] },
+        "time_of_day": { "type": "string", "pattern": "^([01]?\\d|2[0-3]):[0-5]\\d$" },
+        "weekdays": { "type": "string", "description": "weekly：1-7 逗号分隔（1=周一）" },
+        "month_days": { "type": "string", "description": "monthly：1-31 逗号分隔" },
+        "cron": { "type": "string", "maxLength": 64, "description": "cron：5 段（分 时 日 月 周）或 6 段；相邻两次至少间隔 15 分钟" },
+        "timezone": { "type": "string", "maxLength": 64 },
+        "end_at": { "type": ["string", "integer"] },
+        "max_runs": { "type": ["string", "integer"] },
+        "mail_senders": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": { "type": "string", "minLength": 1, "maxLength": 254 },
+          "description": "mail：发件人白名单，每项为完整邮箱地址、@域名或 members（本租户成员）；只能是用户在对话里明确给出的发件人"
+        },
+        "mail_subject_contains": { "type": "string", "maxLength": 100, "description": "mail，可选：标题包含（意图筛选，不是安全控制）" },
+        "mail_folder": { "type": "string", "maxLength": 200, "description": "mail，可选：文件夹，缺省 INBOX" },
+        "poll_minutes": { "type": ["string", "integer"], "description": "mail，可选：检查间隔 5–60 分钟，缺省 5" }
+      }
+    },
+    "proposeResponse": {
+      "type": "object",
+      "required": ["protocol", "result"],
+      "properties": {
+        "protocol": { "const": "purefect-ai-execution/1" },
+        "result": { "enum": ["dispatched", "proposed"] },
+        "task_id": { "$ref": "#/$defs/id", "description": "result=dispatched 时：已建好并派出的任务" },
+        "proposal_id": { "type": "string", "description": "result=proposed 时：会话里的建议卡片标识" },
+        "next_fire_at": { "type": "integer", "description": "定时 / 周期提议：第一次触发时间（毫秒），让助理据此向用户说明" },
+        "mailbox_email": { "type": "string", "description": "邮件触发提议：要监听的邮箱地址（数字员工计划是它自己的邮箱，真人计划是发起人自己的邮箱），不含凭据" }
+      }
+    },
+
+    "completeRequest": {
+      "allOf": [{ "$ref": "#/$defs/proof" }],
+      "type": "object",
+      "required": ["outcome"],
+      "properties": {
+        "outcome": {
+          "type": "object",
+          "required": ["status"],
+          "description": "结果信封（≤256KB）。Engine 只保留下列字段并计算摘要；内容相同的重复结算视为成功。",
+          "properties": {
+            "status": { "enum": ["SUCCEEDED", "FAILED", "CANCELLED"] },
+            "answer": { "type": "string" },
+            "error": {
+              "type": "object",
+              "properties": { "code": { "type": "string", "maxLength": 64 }, "message": { "type": "string", "maxLength": 512 } }
+            },
+            "usage": {
+              "type": "object",
+              "properties": { "input_tokens": { "type": "integer" }, "output_tokens": { "type": "integer" } }
+            }
+          }
+        }
+      }
+    },
+    "completeResponse": {
+      "type": "object",
+      "required": ["protocol", "result"],
+      "properties": {
+        "protocol": { "const": "purefect-ai-execution/1" },
+        "result": {
+          "enum": ["ACCEPTED", "ALREADY_ACCEPTED", "ACCEPTED_AS_CANCELLED"],
+          "description": "租约已失效或结果冲突时返回错误 ai_complete_rejected"
+        }
+      }
+    }
+  },
+  "errors": {
+    "ai_lease_lost": "租约已失效（过期、凭证或代次不符、Run 已结束），Worker 必须立即停止执行",
+    "ai_event_offset_gap": "事件偏移出现空洞，按错误上下文中的 expected 重发",
+    "ai_complete_rejected": "结算被拒绝：租约失效或与已接受的结果冲突",
+    "ai_invalid_input": "入参不符合契约",
+    "ai_output_limit": "本 Run 的生成文件已达上限",
+    "ai_propose_unavailable": "本 Run 不能提议任务（只有对话 Run 可以）",
+    "ai_propose_assignee_not_mentioned": "负责人不在本条消息的提及里",
+    "task_execution_unsupported": "发起人没有把任务派给该数字员工的权限",
+    "task_assignee_invalid": "负责人不存在或不可接活",
+    "task_invalid": "任务参数无效（标题、时间格式等）",
+    "task_plan_schedule_invalid": "时间规则无效（格式、间隔不足 15 分钟、已经没有下一次）",
+    "task_plan_invalid": "计划参数无效",
+    "ai_execution_disabled": "Engine 未启用 AI 执行"
+  }
+}

@@ -1,0 +1,83 @@
+{
+  "name": "@purefect/sandlane",
+  "version": "0.1.0",
+  "private": true,
+  "author": "dickensi <dickensiw@gmail.com>",
+  "type": "module",
+  "description": "Agent CLI sandbox runner: leased Runs from a control plane, executed by agent CLIs in isolated containers behind in-process model and tool gateways",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/purefect-labs/purefect-sandlane.git"
+  },
+  "license": "Apache-2.0",
+  "exports": {
+    "./runtime": {
+      "types": "./dist/runtime/runtime.d.ts",
+      "import": "./dist/runtime/runtime.js"
+    },
+    "./spi/context": {
+      "types": "./dist/spi/context.d.ts",
+      "import": "./dist/spi/context.js"
+    },
+    "./spi/control-plane": {
+      "types": "./dist/spi/control-plane.d.ts",
+      "import": "./dist/spi/control-plane.js"
+    },
+    "./spi/harness": {
+      "types": "./dist/spi/harness.d.ts",
+      "import": "./dist/spi/harness.js"
+    },
+    "./spi/model-upstream": {
+      "types": "./dist/spi/model-upstream.d.ts",
+      "import": "./dist/spi/model-upstream.js"
+    },
+    "./spi/sandbox": {
+      "types": "./dist/spi/sandbox.d.ts",
+      "import": "./dist/spi/sandbox.js"
+    },
+    "./spi/tool-provider": {
+      "types": "./dist/spi/tool-provider.d.ts",
+      "import": "./dist/spi/tool-provider.js"
+    },
+    "./spi/web-access": {
+      "types": "./dist/spi/web-access.d.ts",
+      "import": "./dist/spi/web-access.js"
+    },
+    "./core/credentials": {
+      "types": "./dist/core/credentials.d.ts",
+      "import": "./dist/core/credentials.js"
+    }
+  },
+  "files": [
+    "dist",
+    "contract",
+    "LICENSE",
+    "NOTICE",
+    "docs"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "format:runtime": "prettier --write \"src/{spi,core,common,runtime}/*.ts\" \"src/bin/worker.ts\" \"src/status/*.ts\" \"src/sandbox/docker/{docker-*,channel-*,lifecycle,contracts,client,server,broker-transport,broker-sandbox,run-network,relay-binding,managed-launch,session-processes,session-inputs,session-outputs}.ts\" \"src/harness/codex/{codex-adapter,codex-managed-config,local-process-transport}.ts\" \"src/harness/claude-code/*.ts\" \"src/gateway/model/{responses-request,upstream-transport,messages-request,messages-provider,model-server,web-access,file-mode}.ts\" \"src/gateway/tool/local-authority.ts\" \"src/plugins/purefect/{workspace-interaction,contract,control-plane,context,purefect-adapter,purefect-catalog,task-delegation,task-schedule,task-mail}.ts\" \"src/plugins/memory/context-provider.ts\" \"test/{architecture,docker-attach,broker-transport,harness-transport,sandbox-broker,managed-cli-*,broker-sandbox,execution-*,workspace-interaction,claude-code-driver,messages-gateway,web-access,status-panel,session-inputs,file-mode,runtime-composition}.test.js\" \"test/{session-outputs,output-files,task-delegation}.test.js\" \"fixtures/fake-claude-code.js\" \"scripts/docker-attach-validation.js\"",
+    "format:runtime:check": "prettier --check \"src/{spi,core,common,runtime}/*.ts\" \"src/bin/worker.ts\" \"src/status/*.ts\" \"src/sandbox/docker/{docker-*,channel-*,lifecycle,contracts,client,server,broker-transport,broker-sandbox,run-network,relay-binding,managed-launch,session-processes,session-inputs,session-outputs}.ts\" \"src/harness/codex/{codex-adapter,codex-managed-config,local-process-transport}.ts\" \"src/harness/claude-code/*.ts\" \"src/gateway/model/{responses-request,upstream-transport,messages-request,messages-provider,model-server,web-access,file-mode}.ts\" \"src/gateway/tool/local-authority.ts\" \"src/plugins/purefect/{workspace-interaction,contract,control-plane,context,purefect-adapter,purefect-catalog,task-delegation,task-schedule,task-mail}.ts\" \"src/plugins/memory/context-provider.ts\" \"test/{architecture,docker-attach,broker-transport,harness-transport,sandbox-broker,managed-cli-*,broker-sandbox,execution-*,workspace-interaction,claude-code-driver,messages-gateway,web-access,status-panel,session-inputs,file-mode,runtime-composition}.test.js\" \"test/{session-outputs,output-files,task-delegation}.test.js\" \"fixtures/fake-claude-code.js\" \"scripts/docker-attach-validation.js\"",
+    "broker": "node dist/bin/broker.js",
+    "runtime:purefect": "node dist/bin/worker.js",
+    "runtime:execution": "node dist/bin/worker.js",
+    "test": "npm run build && node --test test/*.test.js",
+    "package:check": "npm run build && node scripts/package-validation.js",
+    "preflight": "node scripts/preflight.js",
+    "check": "node --check scripts/preflight-lib.js && node --check scripts/preflight.js && node --check scripts/package-validation.js && npm run typecheck"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "ajv": "8.20.0",
+    "prettier": "3.8.1",
+    "typescript": "7.0.2"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2"
+  }
+}

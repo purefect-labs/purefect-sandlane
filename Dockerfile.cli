@@ -1,0 +1,50 @@
+# Copyright © 2024-2026 杭州熵闪科技(Hangzhou Sunshine Technology Corporation). All rights reserved. https://www.purefect.cn
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Native CLI only. Driver, Broker and Worker code remain outside this image.
+ARG NODE_IMAGE=node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6
+FROM ${NODE_IMAGE}
+ARG CODEX_VERSION
+COPY LICENSE NOTICE /usr/share/doc/purefect-sandlane/
+RUN node -e 'if (!/^\d+\.\d+\.\d+$/.test(process.argv[1])) process.exit(1)' "$CODEX_VERSION" \
+    && npm install --global "@openai/codex@$CODEX_VERSION" \
+    && npm cache clean --force
+# Document tools for conversation files (file mode): python3 with pinned libraries, installed at
+# build time into the system site-packages. The sandbox has no network (nothing can be installed
+# at run time) and a read-only root filesystem: matplotlib writes its cache under the /tmp tmpfs,
+# and Python never writes bytecode next to the sources. Keep this list identical in
+# Dockerfile.cli and Dockerfile.cli-claude (test/architecture.test.js checks it).
+ARG PYTHON_DOC_TOOLS="pypdf==5.4.0 pdfplumber==0.11.6 openpyxl==3.1.5 pandas==2.2.3 numpy==2.2.4 python-pptx==1.0.2 python-docx==1.1.2 matplotlib==3.10.1"
+# Optional build-time mirrors for networks where deb.debian.org / pypi.org are slow or blocked, e.g.
+# --build-arg APT_MIRROR=http://mirrors.aliyun.com --build-arg PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+# Empty (default) keeps the upstream sources; the apt source list is restored afterwards.
+ARG APT_MIRROR=""
+ARG PIP_INDEX_URL=""
+RUN if [ -n "$APT_MIRROR" ]; then cp /etc/apt/sources.list.d/debian.sources /tmp/debian.sources \
+        && sed -i "s#http://deb.debian.org#${APT_MIRROR}#g" /etc/apt/sources.list.d/debian.sources; fi \
+    && apt-get update \
+    && apt-get install --yes --no-install-recommends python3 python3-pip \
+    && pip3 install --no-cache-dir --break-system-packages --only-binary=:all: \
+        ${PIP_INDEX_URL:+--index-url "$PIP_INDEX_URL"} $PYTHON_DOC_TOOLS \
+    && if [ -n "$APT_MIRROR" ]; then mv /tmp/debian.sources /etc/apt/sources.list.d/debian.sources; fi \
+    && apt-get purge --yes --auto-remove python3-pip \
+    && rm -rf /var/lib/apt/lists/* /root/.cache \
+    && MPLCONFIGDIR=/tmp/mpl-build python3 -c "import pypdf, pdfplumber, openpyxl, pandas, pptx, docx, matplotlib.pyplot" \
+    && rm -rf /tmp/mpl-build
+ENV MPLCONFIGDIR=/tmp/matplotlib MPLBACKEND=Agg PYTHONDONTWRITEBYTECODE=1
+LABEL cn.purefect.sandlane.harness="codex" cn.purefect.sandlane.cli-version="${CODEX_VERSION}"
+WORKDIR /workspace
+USER 1000:1000
+ENTRYPOINT ["/usr/local/bin/codex"]
+CMD ["app-server"]
