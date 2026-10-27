@@ -24,7 +24,7 @@ const report = JSON.parse(output)[0];
 const files = report?.files?.map(entry => entry.path);
 if (!Array.isArray(files) || files.length < 1) throw new Error("Invalid npm pack report");
 
-const roots = new Set(["LICENSE", "NOTICE", "README.md", "package.json"]);
+const roots = new Set(["LICENSE", "NOTICE", "README.en.md", "README.md", "package.json"]);
 const prefixes = ["contract/", "dist/", "docs/"];
 const unexpected = files.filter(
   file => !roots.has(file) && !prefixes.some(prefix => file.startsWith(prefix))
@@ -34,6 +34,7 @@ if (unexpected.length) throw new Error(`Unexpected package files: ${unexpected.j
 for (const required of [
   "LICENSE",
   "NOTICE",
+  "README.en.md",
   "dist/runtime/runtime.js",
   "dist/runtime/runtime.d.ts",
   "contract/ai-execution-v1.schema.json"
