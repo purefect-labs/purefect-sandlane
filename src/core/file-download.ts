@@ -48,57 +48,65 @@ export async function downloadFile(
   send: typeof fetch = fetch
 ): Promise<Buffer> {
   if (!url.startsWith("https://")) throw new DownloadError("DOWNLOAD_REJECTED");
-  const timeout = AbortSignal.timeout(limits.timeoutMs);
-  const abort = AbortSignal.any([signal, timeout]);
-  const failure = () => new DownloadError(timeout.aborted ? "DOWNLOAD_TIMEOUT" : "DOWNLOAD_FAILED");
-  let response: Response;
+  const timeout = new AbortController();
+  // AbortSignal.timeout() uses an unref'ed timer in Node 20/22, so a stalled transport can leave
+  // the promise pending while the process exits. A download deadline must keep the operation alive.
+  const timeoutHandle = setTimeout(() => timeout.abort(), limits.timeoutMs);
+  const abort = AbortSignal.any([signal, timeout.signal]);
+  const failure = () =>
+    new DownloadError(timeout.signal.aborted ? "DOWNLOAD_TIMEOUT" : "DOWNLOAD_FAILED");
   try {
-    // A signed URL answers directly; a redirect could only lead somewhere unexpected.
-    response = await send(url, { method: "GET", redirect: "error", signal: abort });
-  } catch {
-    throw failure();
-  }
-  const body = response.body;
-  const discard = () => void body?.cancel().catch(() => {});
-  if (response.status !== 200 || !body) {
-    discard();
-    throw new DownloadError("DOWNLOAD_STATUS");
-  }
-  const declared = response.headers.get("content-length");
-  if (declared !== null) {
-    const length = /^[0-9]{1,15}$/.test(declared) ? Number(declared) : NaN;
-    if (!Number.isSafeInteger(length) || length > limits.maxBytes) {
-      discard();
-      throw new DownloadError(
-        Number.isSafeInteger(length) ? "DOWNLOAD_TOO_LARGE" : "DOWNLOAD_FAILED"
-      );
+    let response: Response;
+    try {
+      // A signed URL answers directly; a redirect could only lead somewhere unexpected.
+      response = await send(url, { method: "GET", redirect: "error", signal: abort });
+    } catch {
+      throw failure();
     }
-    if (limits.expectedSize !== undefined && length !== limits.expectedSize) {
+    const body = response.body;
+    const discard = () => void body?.cancel().catch(() => {});
+    if (response.status !== 200 || !body) {
       discard();
-      throw new DownloadError("DOWNLOAD_SIZE_MISMATCH");
+      throw new DownloadError("DOWNLOAD_STATUS");
     }
-  }
-  const chunks: Buffer[] = [];
-  let total = 0;
-  const reader = body.getReader();
-  try {
-    for (;;) {
-      let next: ReadableStreamReadResult<Uint8Array>;
-      try {
-        next = await reader.read();
-      } catch {
-        throw failure();
+    const declared = response.headers.get("content-length");
+    if (declared !== null) {
+      const length = /^[0-9]{1,15}$/.test(declared) ? Number(declared) : NaN;
+      if (!Number.isSafeInteger(length) || length > limits.maxBytes) {
+        discard();
+        throw new DownloadError(
+          Number.isSafeInteger(length) ? "DOWNLOAD_TOO_LARGE" : "DOWNLOAD_FAILED"
+        );
       }
-      if (next.done) break;
-      total += next.value.byteLength;
-      if (total > limits.maxBytes) throw new DownloadError("DOWNLOAD_TOO_LARGE");
-      chunks.push(Buffer.from(next.value));
+      if (limits.expectedSize !== undefined && length !== limits.expectedSize) {
+        discard();
+        throw new DownloadError("DOWNLOAD_SIZE_MISMATCH");
+      }
     }
-  } catch (error) {
-    void reader.cancel().catch(() => {});
-    throw error;
+    const chunks: Buffer[] = [];
+    let total = 0;
+    const reader = body.getReader();
+    try {
+      for (;;) {
+        let next: ReadableStreamReadResult<Uint8Array>;
+        try {
+          next = await reader.read();
+        } catch {
+          throw failure();
+        }
+        if (next.done) break;
+        total += next.value.byteLength;
+        if (total > limits.maxBytes) throw new DownloadError("DOWNLOAD_TOO_LARGE");
+        chunks.push(Buffer.from(next.value));
+      }
+    } catch (error) {
+      void reader.cancel().catch(() => {});
+      throw error;
+    }
+    if (limits.expectedSize !== undefined && total !== limits.expectedSize)
+      throw new DownloadError("DOWNLOAD_SIZE_MISMATCH");
+    return Buffer.concat(chunks, total);
+  } finally {
+    clearTimeout(timeoutHandle);
   }
-  if (limits.expectedSize !== undefined && total !== limits.expectedSize)
-    throw new DownloadError("DOWNLOAD_SIZE_MISMATCH");
-  return Buffer.concat(chunks, total);
 }

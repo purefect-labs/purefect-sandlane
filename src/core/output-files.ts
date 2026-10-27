@@ -449,7 +449,12 @@ export async function deliverOutputs(
   ): Promise<"ok" | "failed" | "unknown" | "late"> => {
     const remaining = options.notAfter() - now();
     if (lost || options.stopped?.() || options.signal?.aborted || remaining <= 0) return "late";
-    const signals = [AbortSignal.timeout(Math.max(1, Math.min(callTimeoutMs, remaining)))];
+    const timeout = new AbortController();
+    const timeoutHandle = setTimeout(
+      () => timeout.abort(),
+      Math.max(1, Math.min(callTimeoutMs, remaining))
+    );
+    const signals: AbortSignal[] = [timeout.signal];
     if (options.signal) signals.push(options.signal);
     try {
       await options.send(report, AbortSignal.any(signals));
@@ -459,6 +464,8 @@ export async function deliverOutputs(
       if (faultOf(error) === FAULT_OUTPUT_LIMIT) limitReached = true;
       log("OUTPUT_FILE_REPORT_FAILED", { error: code(error) });
       return refused(error) ? "failed" : "unknown";
+    } finally {
+      clearTimeout(timeoutHandle);
     }
   };
   let index = 0;
