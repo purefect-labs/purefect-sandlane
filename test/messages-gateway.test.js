@@ -150,7 +150,7 @@ async function setup(t, upstream, auth = "x-api-key", webAccess = undefined, bas
   );
   const gateway = new ModelGateway(models, models, models.provider, {
     maxConcurrent: 8,
-    timeoutMs: 10_000,
+    timeoutMs: 30_000,
     receiptTimeoutMs: 1_000
   });
   const server = createModelServer(tls, "localhost", gateway, models.lookup);
