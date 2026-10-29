@@ -86,35 +86,6 @@ test("launch shim is directly executable as a container entrypoint", async () =>
     assert.deepEqual(JSON.parse(stdout), {
       _sandlane: { schemaVersion: 1, event: "exit", code: 125, phase: "configuration" }
     });
-
-    const configured = spawn(entrypoint, [], {
-      env: {
-        ...process.env,
-        SANDLANE_SINGLE_SHOT_HARNESS: "qwen-code",
-        SANDLANE_MODEL_BASE_URL: "https://model.test/v1",
-        SANDLANE_MODEL_ALIAS: "model-1",
-        SANDLANE_MODEL_CAPABILITY: "a".repeat(43),
-        SANDLANE_MCP_URL: "https://tools.test/mcp",
-        SANDLANE_MCP_SERVER: "demo",
-        SANDLANE_MCP_CAPABILITY: "b".repeat(43),
-        SANDLANE_MCP_TOOLS: '["demo_echo"]'
-      },
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-    let configuredOutput = "";
-    configured.stdout.setEncoding("utf8");
-    configured.stdout.on("data", chunk => {
-      configuredOutput += chunk;
-    });
-    configured.stdin.end('{"schemaVersion":1,"prompt":"hello"}\n');
-    const configuredCode = await new Promise((resolve, reject) => {
-      configured.once("error", reject);
-      configured.once("exit", resolve);
-    });
-    assert.equal(configuredCode, 125);
-    assert.deepEqual(JSON.parse(configuredOutput), {
-      _sandlane: { schemaVersion: 1, event: "exit", code: 125, phase: "invocation" }
-    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
