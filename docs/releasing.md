@@ -34,8 +34,8 @@ git diff --check
 ```bash
 git switch main
 git pull --ff-only
-git tag -a v0.1.0 -m "Purefect SandLane v0.1.0"
-git push origin v0.1.0
+git tag -a v0.1.1 -m "Purefect SandLane v0.1.1"
+git push origin v0.1.1
 ```
 
 `Container images` 工作流会再次校验：
@@ -45,15 +45,15 @@ git push origin v0.1.0
 - `CHANGELOG.md` 存在对应版本；
 - syntax/type、format、单元测试、生产依赖审计与实际 tarball 消费测试通过。
 
-门禁通过后，工作流发布 runtime、Relay、Qwen Code 与 OpenCode 的 `linux/amd64`、`linux/arm64`
+门禁通过后，工作流发布 runtime、Relay、Codex、Qwen Code 与 OpenCode 的 `linux/amd64`、`linux/arm64`
 镜像，生成 SBOM 和 provenance，再创建 GitHub Release，附加
-`purefect-sandlane-<version>.tgz` 与 `SHA256SUMS`。Codex 与 Claude Code 镜像不由该工作流发布；
+`purefect-sandlane-<version>.tgz` 与 `SHA256SUMS`。Claude Code 镜像不由该工作流发布；
 工作流也不会向 npm registry 发布。
 
 ## 发布后
 
 1. 确认 GitHub Release、tarball 和校验文件可下载；
-2. 确认四个 GHCR package 为 public，`<version>`、`<major>.<minor>` 和 `latest` manifest 均包含两种架构；
+2. 确认五个 GHCR package 为 public，`<version>`、`<major>.<minor>` 和 `latest` manifest 均包含两种架构；
 3. 从 Release tarball 在干净的 Node.js 20/22 环境完成一次消费者安装；
 4. 运行文档中的无凭据 Demo，并抽查所有公开链接；
 5. 发布公告应引用 `CHANGELOG.md` 的验证边界和已知限制，不使用“生产级验证完成”等未经证明的表述。

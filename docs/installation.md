@@ -54,12 +54,13 @@ docker build -f deploy/Dockerfile.relay -t purefect/sandlane-relay:local .
 
 - `ghcr.io/purefect-labs/purefect-sandlane-runtime:<version>`；
 - `ghcr.io/purefect-labs/purefect-sandlane-relay:<version>`；
+- `ghcr.io/purefect-labs/purefect-sandlane-codex:<version>`；
 - `ghcr.io/purefect-labs/purefect-sandlane-qwen-code:<version>`；
 - `ghcr.io/purefect-labs/purefect-sandlane-opencode:<version>`。
 
-仓库管理员也可从 Actions 手动触发并指定临时 tag。Qwen Code 和 OpenCode 使用固定的上游版本；
-它们的镜像 tag 与 SandLane 发布版本一致，实际 CLI 版本见镜像 label 和发布说明。Codex 与 Claude Code
-CLI 镜像不会由该流程公开发布；部署者须确认第三方版本和分发条款后自行构建并固定 digest。
+仓库管理员也可从 Actions 手动触发并指定临时 tag。Codex、Qwen Code 和 OpenCode 使用固定的上游版本；
+它们的镜像 tag 与 SandLane 发布版本一致，实际 CLI 版本见镜像 label 和发布说明。Claude Code CLI
+镜像不会由该流程公开发布；部署者须确认其版本和分发条款后自行构建并固定 digest。
 
 ## 3. 配置
 

@@ -18,7 +18,7 @@ SandLane 的模型服务与 Agent CLI 分开配置，并不限于 OpenAI 或 Ant
 
 模型扩展不限于上述服务商，也可面向 Kimi（月之暗面）、Google Gemini 等更多模型。当前已实现可信 Worker 侧的 `ModelUpstreamFactory` 扩展机制：符合现有协议的服务可配置接入；原生协议或认证方式不同的服务，可开发上游适配器，将请求、流式响应、工具调用及用量映射到现有网关契约。Kimi、Gemini 尚未验证，也未内置其专用协议适配器；仅兼容 Chat Completions 不代表可直接接入现有 Driver。
 
-Agent CLI 同样可以扩展：当前内置 Codex、Claude Code、Qwen Code 和 OpenCode。后两者提供 Apache-2.0/MIT 开源 CLI 路径，首版通过 Responses 网关运行且只开放 Run 授权的 MCP 工具。新增 CLI 仍需显式实现 `HarnessDriver`、启动配置、固定版本镜像和兼容测试，不是仅修改工具名称即可启用；详情见 [Qwen Code 与 OpenCode](./docs/qwen-code-and-opencode.md)和[独立接入指南](./docs/standalone.md)。
+Agent CLI 同样可以扩展：当前内置 Codex、Claude Code、Qwen Code 和 OpenCode。项目公开发布 Apache-2.0 的 Codex、Qwen Code 镜像和 MIT 的 OpenCode 镜像；Qwen Code 与 OpenCode 首版通过 Responses 网关运行且只开放 Run 授权的 MCP 工具。新增 CLI 仍需显式实现 `HarnessDriver`、启动配置、固定版本镜像和兼容测试，不是仅修改工具名称即可启用；详情见 [Qwen Code 与 OpenCode](./docs/qwen-code-and-opencode.md)和[独立接入指南](./docs/standalone.md)。
 
 [![CI](https://github.com/purefect-labs/purefect-sandlane/actions/workflows/ci.yml/badge.svg)](https://github.com/purefect-labs/purefect-sandlane/actions/workflows/ci.yml)
 
@@ -190,4 +190,4 @@ SandLane 的使用说明与技术细节维护在[本仓库文档](./docs/README.
 
 Purefect SandLane 使用 [Apache License 2.0](./LICENSE)，其他归属与声明见 [NOTICE](./NOTICE)。
 
-SandLane 只启动由部署者安装的第三方 Agent CLI。这些 CLI、模型服务商和所连接的服务仍受各自许可证与条款约束。Claude Code 多租户使用的相关事项见 [Claude Code 支持](./docs/claude-code.md)。
+公开镜像中包含或由部署者自行安装的第三方 Agent CLI、模型服务商和所连接的服务，仍受各自许可证与条款约束。Claude Code 多租户使用的相关事项见 [Claude Code 支持](./docs/claude-code.md)。

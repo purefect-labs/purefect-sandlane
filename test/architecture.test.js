@@ -316,4 +316,11 @@ test("distributed images carry the SandLane license and notice", () => {
     readFileSync(path.join(ROOT, "deploy/licenses/opencode-LICENSE"), "utf8"),
     /^MIT License\n\nCopyright \(c\) 2025 opencode\n/
   );
+  const codex = readFileSync(path.join(ROOT, "deploy/Dockerfile.cli"), "utf8");
+  assert.match(codex, /COPY LICENSE \/usr\/share\/doc\/codex\/LICENSE/);
+  assert.match(codex, /COPY deploy\/licenses\/codex-NOTICE \/usr\/share\/doc\/codex\/NOTICE/);
+  assert.match(
+    readFileSync(path.join(ROOT, "deploy/licenses/codex-NOTICE"), "utf8"),
+    /^OpenAI Codex\nCopyright 2025 OpenAI\n/
+  );
 });

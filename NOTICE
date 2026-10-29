@@ -14,11 +14,15 @@ Optional container images built from this repository may include the following
 unmodified third-party command-line tools. Their upstream licenses and notices
 continue to apply:
 
+- OpenAI Codex, Copyright 2025 OpenAI, licensed under Apache License 2.0.
+  This distribution preserves the upstream Codex NOTICE in the Codex image.
+  https://github.com/openai/codex
 - Qwen Code, Copyright its contributors, licensed under Apache License 2.0.
   https://github.com/QwenLM/qwen-code
 - OpenCode, Copyright its contributors, licensed under the MIT License.
   https://github.com/anomalyco/opencode
 
-Codex and Claude Code are not part of Purefect SandLane and remain subject to
-their respective publishers' license terms. Deployers are responsible for
-reviewing the terms that apply to every CLI image they build or distribute.
+These command-line tools are not part of Purefect SandLane and remain subject
+to their respective upstream licenses and service terms. Claude Code is not
+publicly distributed by this project. Deployers are responsible for reviewing
+the terms that apply to every CLI image they build or distribute.

@@ -9,6 +9,17 @@ upgrading.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-29
+
+### Added
+
+- A public, pinned Codex CLI 0.154.0 image for `linux/amd64` and `linux/arm64`, including the
+  upstream Apache-2.0 license and NOTICE, SBOM, and provenance attestations.
+
+### Fixed
+
+- GitHub Release notes now accept the dated Keep a Changelog heading used by this repository.
+
 ## [0.1.0] - 2026-10-29
 
 The first public release of SandLane. Release artifacts include the source archive, an installable
@@ -50,5 +61,6 @@ and OpenCode images:
   npm registry.
 - The managed runtime API is experimental and may change between `0.x` releases.
 
-[Unreleased]: https://github.com/purefect-labs/purefect-sandlane/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/purefect-labs/purefect-sandlane/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/purefect-labs/purefect-sandlane/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/purefect-labs/purefect-sandlane/releases/tag/v0.1.0

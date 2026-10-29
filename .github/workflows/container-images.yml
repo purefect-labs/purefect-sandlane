@@ -94,6 +94,10 @@ jobs:
           - name: relay
             dockerfile: deploy/Dockerfile.relay
             image: ghcr.io/purefect-labs/purefect-sandlane-relay
+          - name: codex
+            dockerfile: deploy/Dockerfile.cli
+            image: ghcr.io/purefect-labs/purefect-sandlane-codex
+            build_args: CODEX_VERSION=0.154.0
           - name: qwen-code
             dockerfile: deploy/Dockerfile.cli-qwen
             image: ghcr.io/purefect-labs/purefect-sandlane-qwen-code
@@ -185,7 +189,8 @@ jobs:
           sha256sum *.tgz > SHA256SUMS
           VERSION="${GITHUB_REF_NAME#v}"
           awk -v heading="## [$VERSION]" \
-            '$0 == heading { emit = 1; next } emit && /^## \[/ { exit } emit' \
+            '$0 == heading || index($0, heading " - ") == 1 { emit = 1; next } \
+             emit && /^## \[/ { exit } emit' \
             ../CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
           test -s "$RUNNER_TEMP/release-notes.md"
 

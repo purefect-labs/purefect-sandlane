@@ -22,7 +22,7 @@ npm ci
 npm run build
 npm pack
 # 在调用方项目中安装上一步实际生成的 .tgz
-npm install /path/to/purefect-sandlane-0.1.0.tgz
+npm install /path/to/purefect-sandlane-0.1.1.tgz
 ```
 
 `npm run package:check` 会在仓外目录安装实际 tarball，检查 ESM、TypeScript 声明和最小 runtime 生命周期。
