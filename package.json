@@ -99,7 +99,7 @@
   "devDependencies": {
     "@types/node": "22.20.5",
     "ajv": "8.20.0",
-    "prettier": "3.8.1",
+    "prettier": "3.9.10",
     "typescript": "7.0.2"
   },
   "dependencies": {
