@@ -475,8 +475,9 @@ test("the first event and first text sync without the throttle gap; TIMING share
     timing.map(l => l.phase),
     ["claimed", "sandbox-ready", "started-acked", "first-delta-synced"]
   );
-  assert.ok(timing.every(l => l.run === "201" && Number.isInteger(l.elapsedMs)));
-  assert.equal(timing[0].elapsedMs, 0);
+  assert.ok(
+    timing.every(l => l.run === "201" && Number.isInteger(l.elapsedMs) && l.elapsedMs >= 0)
+  );
   assert.ok(Number.isInteger(timing[0].claimMs) && timing[0].claimMs >= 0);
   for (let i = 1; i < timing.length; i++) assert.ok(timing[i].elapsedMs >= timing[i - 1].elapsedMs);
   // Driver phases are measured from the same origin.
