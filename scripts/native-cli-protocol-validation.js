@@ -244,7 +244,7 @@ try {
     "server.crt"
   ]);
   await copyFile(
-    fileURLToPath(new URL("../Dockerfile.cli-ca", import.meta.url)),
+    fileURLToPath(new URL("../deploy/Dockerfile.cli-ca", import.meta.url)),
     path.join(context, "Dockerfile")
   );
   // Locally built RepoDigests need not exist in a registry. Verify the pinned

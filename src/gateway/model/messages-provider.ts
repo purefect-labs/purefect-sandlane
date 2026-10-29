@@ -20,6 +20,7 @@
 import { WEB_SEARCH_NAME, WEB_SEARCH_TOOL } from "./messages-request.js";
 import { rejectSecrets, secretPrefixSuffix } from "./responses-provider.js";
 import { EventFrames } from "./responses-stream.js";
+import { upstreamEndpoint } from "./upstream-endpoint.js";
 import type { UpstreamSend } from "./upstream-transport.js";
 import {
   ModelUpstreamRejection,
@@ -54,18 +55,9 @@ export class MessagesProvider implements MessagesUpstream {
     private readonly send: UpstreamSend = fetch,
     private readonly auth: MessagesAuth = "x-api-key"
   ) {
-    const url = new URL(origin);
-    if (
-      url.protocol !== "https:" ||
-      url.username ||
-      url.password ||
-      url.search ||
-      url.hash ||
-      !["/", "/v1", "/v1/"].includes(url.pathname) ||
-      !["x-api-key", "bearer", "both"].includes(auth)
-    )
+    if (!["x-api-key", "bearer", "both"].includes(auth))
       throw Error("MODEL_PROVIDER_CONFIGURATION");
-    this.endpoint = new URL("/v1/messages", url.origin).href;
+    this.endpoint = upstreamEndpoint(origin, "anthropic-messages");
   }
 
   /** Open a pooled connection to the provider ahead of the first call; sends no credentials. */

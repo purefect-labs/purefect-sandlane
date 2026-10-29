@@ -77,7 +77,8 @@ Broker state 不是业务备份，也不能复制到另一节点后并行启动�
 ### Broker 拒绝 harness
 
 确认 `SANDLANE_BROKER_RUN_IMAGES` 包含租约所选 harness，镜像引用带完整 sha256 digest，并且该
-harness 是当前 build 内置的 Codex 或 Claude Code launcher。Broker 不会回退到宿主安装的 CLI。
+harness 是当前 build 内置的 Codex、Claude Code、Qwen Code 或 OpenCode launcher。Broker 不会回退到
+宿主安装的 CLI，也不会在请求的 Harness 镜像缺失时自动改用其他 CLI。
 
 ### CLI 无法调用模型或工具
 

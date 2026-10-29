@@ -6,6 +6,15 @@
 
 # 配置参考
 
+第三方 MCP：Purefect Worker 可用 `SANDLANE_MCP_CONFIG_FILE` 指定管理员 HTTP / stdio MCP 配置，
+与现有工具并存。文件挂载、Secret、用户绑定及工具白名单见 [MCP 接入指南](./mcp.md)。
+
+DeepSeek、智谱、Qwen 等上游的协议、地址前缀、认证和实际验收方式见[模型接入指南](./model-providers.md)。
+模型 Key 不放进 CLI 环境；`SANDLANE_MODEL_MESSAGES_AUTH` 控制 Worker 到 Messages 上游的认证。
+
+本页 Worker 环境变量对应 Purefect 专用入口。独立 Demo 自动生成受限配置，无需复制
+`.env.example`；第三方通过 [managed API](./standalone.md) 显式传参，API 不读取环境变量。
+
 当前入口为 `dist/bin/worker.js`、`dist/bin/broker.js` 和 `dist/bin/relay.js`。三者只读取进程环境，
 不会自动加载 `.env.local`；使用 `node --env-file=.env.local ...`、systemd `EnvironmentFile` 或容器
 平台配置显式注入。仓库 `.env.example` 是可复制的占位模板，不得写入真实 Secret。
@@ -29,6 +38,9 @@
 ### 文件模式：读文件与命令行
 
 “文件模式”由租约 `run.file_tools`（布尔，可选）决定；平台不下发时（旧版本）按租约是否带会话文件（`credentials.files` 非空，即使其中的文件全部未载入也算，因为 AI 要读 manifest 告诉用户）判断。文件模式的 Run 一定会写入 `/workspace/inputs`（没有文件时只有空的 `manifest.json`），CLI 生成的文件从 `/workspace/outputs` 收集（见下文“生成文件”）。非文件模式的 Run 工具与以前完全一样，`file_tools=false` 时即使有会话文件也不下载。
+
+文件模式当前只由 Codex 和 Claude Code 支持。Qwen Code 与 OpenCode 首版只开放 Run 授权的 MCP
+工具，收到 `file_tools=true` 会明确拒绝，不会静默退回无文件模式。
 
 | 环节        | 文件模式                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | 非文件模式                                                                                          |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
@@ -85,10 +97,10 @@
 
 ### 镜像里的文档工具
 
-- `Dockerfile.cli`（Codex）与 `Dockerfile.cli-claude` 在构建时用 apt 装 python3，再用 pip（`--only-binary=:all:`，只用预编译 wheel，不需要编译工具）装到系统 site-packages：`pypdf==5.4.0 pdfplumber==0.11.6 openpyxl==3.1.5 pandas==2.2.3 numpy==2.2.4 python-pptx==1.0.2 python-docx==1.1.2 matplotlib==3.10.1`。两份列表须一致（`test/architecture.test.js` 检查），升级时同改。构建完成后卸掉 pip，运行时不能也不需要联网安装。
+- `deploy/Dockerfile.cli`（Codex）与 `deploy/Dockerfile.cli-claude` 在构建时用 apt 装 python3，再用 pip（`--only-binary=:all:`，只用预编译 wheel，不需要编译工具）装到系统 site-packages：`pypdf==5.4.0 pdfplumber==0.11.6 openpyxl==3.1.5 pandas==2.2.3 numpy==2.2.4 python-pptx==1.0.2 python-docx==1.1.2 matplotlib==3.10.1`。两份列表须一致（`test/architecture.test.js` 检查），升级时同改。构建完成后卸掉 pip，运行时不能也不需要联网安装。
 - 只读根文件系统下：`MPLCONFIGDIR=/tmp/matplotlib`（matplotlib 缓存写到 /tmp tmpfs）、`MPLBACKEND=Agg`（无显示）、`PYTHONDONTWRITEBYTECODE=1`；镜像仍以 uid 1000 运行。构建时会实际 import 一遍这些库确认可用。
 - 体积估计：python3 约 50 MB，numpy、pandas、matplotlib 及其依赖（pillow、fonttools、lxml、pdfminer.six、pypdfium2、cryptography 等）约 250 MB，每个 CLI 镜像解压后增加约 300 MB（压缩层约 100 MB）。以实际构建为准。
-- 使用文件模式前须按 [Claude Code 支持](./claude-code.md) 与 Codex 镜像的构建方式构建镜像、在其上构建 `Dockerfile.cli-ca`，执行镜像漏洞与许可证检查，并更新 `SANDLANE_BROKER_RUN_IMAGES` 的 digest。
+- 使用文件模式前须按 [Claude Code 支持](./claude-code.md) 与 Codex 镜像的构建方式构建镜像、在其上构建 `deploy/Dockerfile.cli-ca`，执行镜像漏洞与许可证检查，并更新 `SANDLANE_BROKER_RUN_IMAGES` 的 digest。
 
 ### 资源与按内存接活
 
@@ -145,7 +157,7 @@
 | `SANDLANE_TOOL_MCP_BIND` / `_PORT`                       | 是   | MCP TLS 服务监听 IP 和端口                                                                                                                                                                                                                                                                                                                                                                        |
 | `SANDLANE_TOOL_MCP_HOSTNAME`                             | 是   | 沙箱请求使用、并由服务校验的主机名                                                                                                                                                                                                                                                                                                                                                                |
 | `SANDLANE_TOOL_MCP_TLS_KEY_FILE` / `_TLS_CERT_FILE`      | 是   | MCP 网关 TLS 文件                                                                                                                                                                                                                                                                                                                                                                                 |
-| `SANDLANE_MODEL_FUNCTION_INVENTORY`                      | 否   | 每个 harness 的模型可见 MCP 函数 JSON；默认由启用工具推导。显式配置时，列出的每个 harness 都必须包含启用的控制面工具（Codex `mcp__purefect.propose_task` / `mcp__purefect.report_task`，Claude Code `mcp__purefect__propose_task` / `mcp__purefect__report_task`），否则 Worker 启动失败并列出缺少的函数；不用时从 `SANDLANE_ENABLED_TOOLS` 去掉。没有列出的 harness 不检查（它没有任何可用函数） |
+| `SANDLANE_MODEL_FUNCTION_INVENTORY`                      | 否   | 每个 harness 的模型可见 MCP 函数 JSON；默认由启用工具推导。命名分别为 Codex `mcp__server.tool`、Claude Code/Qwen Code `mcp__server__tool`、OpenCode `server_tool`（工具名中的点转下划线）。显式配置时必须包含各 Harness 启用的控制面工具，否则 Worker 启动失败并列出缺少函数；不用时从 `SANDLANE_ENABLED_TOOLS` 去掉。没有列出的 harness 不检查（它没有任何可用函数） |
 | `SANDLANE_MODEL_FILE_FUNCTION_INVENTORY`                 | 否   | 每个 harness 在文件模式额外放行的内置函数 JSON                                                                                                                                                                                                                                                                                                                                                    |
 | `SANDLANE_MODEL_MESSAGES_AUTH`                           | 否   | `x-api-key`、`bearer` 或 `both`，默认 `x-api-key`                                                                                                                                                                                                                                                                                                                                                 |
 | `SANDLANE_MODEL_MAX_OUTPUT_TOKENS`                       | 否   | 单次模型输出上限，默认 32000                                                                                                                                                                                                                                                                                                                                                                      |

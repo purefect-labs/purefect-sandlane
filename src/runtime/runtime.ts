@@ -42,7 +42,8 @@ export interface RuntimeOptions {
   readonly observeLane?: (index: number) => StatusObserver;
   /** Servers owned by this Runtime. They are listened before claims start and closed on stop. */
   readonly endpoints?: readonly RuntimeEndpoint[];
-  /** Other composition-owned resources, closed after all lanes and endpoints stop. */
+  /** Ownership transfers on invocation, including invalid configuration/startup failures.
+   * Closed in reverse order after all lanes and endpoints stop. Borrowed objects must not be listed. */
   readonly resources?: readonly RuntimeResource[];
   readonly log?: LaneLog;
 }
@@ -96,23 +97,35 @@ async function closeResources(resources: readonly RuntimeResource[]): Promise<un
  * tools, select a model provider or import an application plugin.
  */
 export async function createRuntime(options: RuntimeOptions): Promise<RuntimeHandle> {
-  if (
-    !Number.isSafeInteger(options.concurrency) ||
-    options.concurrency < 1 ||
-    options.concurrency > 16
-  )
-    throw new Error("INVALID_RUNTIME_CONCURRENCY");
-
   const endpoints = Object.freeze([...(options.endpoints ?? [])]);
   const resources = Object.freeze([...(options.resources ?? [])]);
-  const lanes = Array.from(
-    { length: options.concurrency },
-    (_, index) =>
-      new ExecutionLane(options.controlPlane, options.sandbox, options.credentials, {
-        ...options.lane,
-        ...(options.observeLane ? { observe: options.observeLane(index) } : {})
-      })
-  );
+  let lanes: ExecutionLane[];
+  try {
+    if (
+      !Number.isSafeInteger(options.concurrency) ||
+      options.concurrency < 1 ||
+      options.concurrency > 16
+    )
+      throw new Error("INVALID_RUNTIME_CONCURRENCY");
+    if (
+      endpoints.some(endpoint => endpoint.server.listening) ||
+      new Set(endpoints.map(endpoint => endpoint.server)).size !== endpoints.length
+    )
+      throw new Error("INVALID_RUNTIME_ENDPOINT");
+    lanes = Array.from(
+      { length: options.concurrency },
+      (_, index) =>
+        new ExecutionLane(options.controlPlane, options.sandbox, options.credentials, {
+          ...options.lane,
+          ...(options.observeLane ? { observe: options.observeLane(index) } : {})
+        })
+    );
+  } catch (error) {
+    const failures = await closeResources(resources);
+    if (failures.length)
+      throw new AggregateError([error, ...failures], "RUNTIME_STARTUP_CLEANUP_FAILED");
+    throw error;
+  }
   const started: Server[] = [];
   try {
     for (const endpoint of endpoints) {
@@ -120,14 +133,30 @@ export async function createRuntime(options: RuntimeOptions): Promise<RuntimeHan
       started.push(endpoint.server);
     }
   } catch (error) {
-    await Promise.allSettled(started.map(closeServer));
-    await closeResources(resources);
+    const closed = await Promise.allSettled(started.reverse().map(closeServer));
+    const failures = closed.flatMap(result =>
+      result.status === "rejected" ? [result.reason] : []
+    );
+    failures.push(...(await closeResources(resources)));
+    if (failures.length)
+      throw new AggregateError([error, ...failures], "RUNTIME_STARTUP_CLEANUP_FAILED");
     throw error;
   }
 
   const abort = new AbortController();
   let closing: Promise<void> | undefined;
-  const stopped = Promise.all(lanes.map(lane => lane.run(abort.signal))).then(() => undefined);
+  const running = lanes.map(lane => lane.run(abort.signal));
+  const stopped = Promise.all(running)
+    .then(() => undefined)
+    .catch(async error => {
+      abort.abort();
+      const settled = await Promise.allSettled(running);
+      const failures = settled.flatMap(result =>
+        result.status === "rejected" && result.reason !== error ? [result.reason] : []
+      );
+      if (failures.length) throw new AggregateError([error, ...failures], "RUNTIME_LANES_FAILED");
+      throw error;
+    });
   const cleanup = async () => {
     const failures: unknown[] = [];
     for (const server of started.reverse()) {
@@ -140,7 +169,14 @@ export async function createRuntime(options: RuntimeOptions): Promise<RuntimeHan
     failures.push(...(await closeResources(resources)));
     if (failures.length) throw new AggregateError(failures, "RUNTIME_CLEANUP_FAILED");
   };
-  const done = stopped.finally(cleanup);
+  const done = stopped.then(cleanup, async error => {
+    try {
+      await cleanup();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "RUNTIME_FAILED_AND_CLEANUP_FAILED");
+    }
+    throw error;
+  });
 
   const drain = () => {
     for (const lane of lanes) lane.drain();

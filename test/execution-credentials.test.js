@@ -191,14 +191,20 @@ test("local model authority resolves the Run's key and upstream, accumulates usa
     e => e.code === "MODEL_ACCESS_DENIED"
   );
   assert.equal(calls.length, 3);
-  // The default upstream client only accepts an operator-style HTTPS base (/, /v1).
+  // The default upstream client accepts trusted path prefixes but never URL credentials/query.
   const strict = new LocalModelAuthority(registry, { functions: {}, maxOutputTokens: 1000 });
   assert.throws(() =>
     strict.admit(
-      registry.register(grant({ baseUri: "https://m.example.test/custom/path" }), secrets())
+      registry.register(
+        grant({ baseUri: "https://m.example.test/custom/path?key=secret" }),
+        secrets()
+      )
     )
   );
   strict.admit(registry.register(grant({ baseUri: "https://m.example.test/v1" }), secrets()));
+  strict.admit(
+    registry.register(grant({ baseUri: "https://m.example.test/custom/path" }), secrets())
+  );
 });
 
 test("revocation aborts an in-flight upstream model request", async () => {

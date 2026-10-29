@@ -26,7 +26,12 @@ import { MessagesProvider, type MessagesAuth } from "./messages-provider.js";
 import { ResponsesProvider } from "./responses-provider.js";
 import { keepAliveSend, type WarmupOptions } from "./upstream-transport.js";
 import type { ModelRunBinding } from "./model-server.js";
-import type { MessagesUpstream, ModelUpstream, ModelWire } from "../../spi/model-upstream.js";
+import type {
+  MessagesUpstream,
+  ModelUpstream,
+  ModelWire,
+  ModelUpstreamFactory
+} from "../../spi/model-upstream.js";
 import type { RunCredentialLookup, RunCredentialView } from "../../spi/run-credentials.js";
 
 /** Deployment policy for model-visible functions and output size; never taken from a request.
@@ -43,10 +48,7 @@ export interface LocalModelPolicy {
 }
 
 /** Upstream clients per base URI, one per wire the gateway serves. */
-export interface UpstreamFactory {
-  responses(baseUri: string): ModelUpstream;
-  messages(baseUri: string): MessagesUpstream;
-}
+export type UpstreamFactory = ModelUpstreamFactory;
 
 interface Call {
   readonly credential: RunCredentialView;

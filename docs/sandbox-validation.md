@@ -6,9 +6,11 @@
 
 # 沙箱验证
 
-SandLane 的自动测试覆盖 Broker 生命周期、Docker API 交互、Relay、Harness transport、资源参数和安全
-校验，但使用 fake Docker Engine 或 fake Harness。自动测试通过不代表目标 Linux kernel、Docker daemon、
-网络、TLS、cgroup 或 CLI 镜像已经完成端到端验收。
+SandLane 的单元测试覆盖 Broker 生命周期、Docker API 交互、Relay、Harness transport、资源参数和安全
+校验，其中 Docker API 与 Harness 使用 fake 实现。公共 CI 另行使用真实 Docker、Broker、Relay、TLS
+模型网关和 MCP 网关运行独立 fixture，覆盖成功、取消与租约丢失；fixture 仍使用模拟 CLI 和模型。
+这些检查通过不代表目标 Linux kernel、真实 CLI、真实模型、Purefect 控制面、网络、cgroup 或生产故障路径
+已经完成端到端验收。
 
 ## 已实现边界
 
@@ -36,8 +38,9 @@ npm run format:runtime:check
 npm test
 ```
 
-这些命令不启动真实容器。`scripts/` 中的网络、attach、session process 和原生 CLI validation 脚本是
-显式集成工具；运行前逐个阅读其参数与副作用，不要对生产或共享 Docker daemon 执行。
+这些命令不启动真实容器。无凭据 Docker fixture 使用 `npm run demo`，公共 CI 分别运行 `success`、
+`cancel` 和 `lease-loss` 场景。`scripts/` 中的其他网络、attach、session process 和原生 CLI validation
+脚本是显式集成工具；运行前逐个阅读其参数与副作用，不要对生产或共享 Docker daemon 执行。
 
 ## Linux 节点配置
 

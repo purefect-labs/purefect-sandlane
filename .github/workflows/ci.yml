@@ -30,10 +30,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
 
@@ -42,6 +42,9 @@ jobs:
 
       - name: Check syntax
         run: npm run check
+
+      - name: Check built-in Harnesses
+        run: npm run check:harnesses
 
       - name: Check runtime formatting
         run: npm run format:runtime:check
@@ -54,3 +57,35 @@ jobs:
 
       - name: Validate package contents
         run: npm run package:check
+
+  consumer-node20:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run package:check
+
+  standalone:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [success, cancel, lease-loss]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Run standalone Docker execution and cleanup
+        run: npm run demo -- --scenario=${{ matrix.scenario }}
+      - name: Show remaining demo resource identifiers
+        if: always()
+        run: |
+          docker ps -a --filter name=sandlane-demo --format '{{.ID}} {{.Names}} {{.Status}}'
+          docker network ls --filter label=com.docker.compose.project --format '{{.ID}} {{.Name}}'

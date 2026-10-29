@@ -17,6 +17,18 @@
  * (Anthropic Messages) and the tool gateway (MCP over HTTP). Measured against CLI 2.1.301; all
  * Claude Code specific settings live in this directory. */
 import type { HarnessLaunch, HarnessLaunchConfig, HarnessLauncher } from "../../spi/harness.js";
+import {
+  CLAUDE_CODE_FILE_FUNCTIONS,
+  CLAUDE_CODE_WEB_FUNCTIONS,
+  claudeCodeModelFunctions,
+  claudeCodeToolName
+} from "../../common/builtin-harness.js";
+export {
+  CLAUDE_CODE_FILE_FUNCTIONS,
+  CLAUDE_CODE_WEB_FUNCTIONS,
+  claudeCodeModelFunctions,
+  claudeCodeToolName
+} from "../../common/builtin-harness.js";
 
 const COMMAND = "/usr/local/bin/claude";
 const CONFIG_DIR = "/home/runner/.claude";
@@ -27,19 +39,10 @@ const TOOL_CAPABILITY_ENV = "SANDLANE_TOOL_CAPABILITY";
  * carrying the provider's web search tool (`web_search_20250305`) and returns its summary. The
  * gateway removes it for Runs without web access. (`WebFetch` fetches from inside the sandbox and
  * checks domains with the vendor directly, so it can never work here.) */
-export const CLAUDE_CODE_WEB_FUNCTIONS: readonly string[] = Object.freeze(["WebSearch"]);
-
 /** Built-in tools added in file mode (the Run has conversation files in /workspace): reading
  * files (images and PDFs included), listing and searching them, and running commands such as
  * python3 inside the sandbox. Never offered to Runs without files; the model gateway admits these
  * functions for file-mode Runs only. */
-export const CLAUDE_CODE_FILE_FUNCTIONS: readonly string[] = Object.freeze([
-  "Read",
-  "Bash",
-  "Glob",
-  "Grep"
-]);
-
 /** Per-Run-independent arguments; the built-in tool list (`--tools`) is added per Run.
  * - `-p` with stream-json in and out: one bidirectional JSONL session per process; partial
  *   messages carry the text deltas, `--verbose` is required for stream-json output.
@@ -87,17 +90,8 @@ const ENV = Object.freeze({
 
 /** MCP server and tool names as Claude Code shows them to the model: `mcp__<server>__<tool>`,
  * with characters outside [A-Za-z0-9_-] replaced by underscores. */
-export function claudeCodeToolName(server: string, tool: string): string {
-  const normalize = (value: string) => value.replace(/[^A-Za-z0-9_-]/g, "_");
-  return `mcp__${normalize(server)}__${normalize(tool)}`;
-}
-
 /** Function names the model gateway admits for a Claude Code Run: the tool gateway's tools,
  * the client action included. */
-export function claudeCodeModelFunctions(toolServer: string, tools: readonly string[]): string[] {
-  return tools.map(tool => claudeCodeToolName(toolServer, tool));
-}
-
 /** Per-Run arguments and capability environment. The model capability is the API key the CLI
  * sends as `x-api-key`; the tool capability reaches the MCP header through the environment.
  * Web access is not configured here: the gateway enforces each Run's policy. */

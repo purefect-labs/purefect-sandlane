@@ -20,6 +20,7 @@ node_modules/
 # Local configuration and credentials
 .env*
 !.env.example
+.claude/settings.local.json
 
 # Runtime state (runs, workspaces, and local Codex state)
 .data/
@@ -54,6 +55,8 @@ Thumbs.db
 .tasks/
 
 # Temporary files and packaged archives
+.release/
+.tmp/
 tmp/
 temp/
 *.tmp

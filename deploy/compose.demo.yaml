@@ -1,0 +1,97 @@
+# Copyright © 2024-2026 杭州熵闪科技(Hangzhou Sunshine Technology Corporation). All rights reserved. https://www.purefect.cn
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Generated identity, routes, image digests and subnet are supplied by scripts/demo.js.
+# This file is intentionally separate from existing application deployment projects.
+x-runtime: &runtime
+  image: sandlane/runtime:demo
+  pull_policy: never
+  user: "1000:1000"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  pids_limit: 128
+  mem_limit: 512m
+  cpus: 1
+  restart: "no"
+  stop_grace_period: 60s
+services:
+  init:
+    <<: *runtime
+    user: "0:0"
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    command: [node, dist/bin/demo-init.js]
+    network_mode: none
+    volumes:
+      - demo-config:/demo
+      - broker-control:/control
+      - broker-state:/state
+  relay:
+    image: sandlane/relay:demo
+    pull_policy: never
+    user: "1000:1000"
+    entrypoint: [/usr/local/bin/node]
+    command: [/app/bin/relay.js]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 1
+    ipc: private
+    sysctls:
+      net.ipv4.ip_forward: "0"
+      net.ipv6.conf.all.forwarding: "0"
+    networks: [gateways]
+    logging: {driver: none}
+  broker:
+    <<: *runtime
+    command: [node, dist/bin/broker.js]
+    network_mode: none
+    group_add: ["0"]
+    environment:
+      SANDLANE_BROKER_DOCKER_SOCKET: /var/run/docker.sock
+      SANDLANE_BROKER_SOCKET: /control/broker.sock
+      SANDLANE_BROKER_STATE_DIR: /state
+      SANDLANE_BROKER_SERVICE_TOKEN_FILE: /demo/broker-token
+      SANDLANE_BROKER_NETWORK_MODE: isolated
+      SANDLANE_BROKER_MAX_CONCURRENT: "2"
+      SANDLANE_BROKER_PER_TENANT: "2"
+      SANDLANE_LABEL_PREFIX: demo.sandlane
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - demo-config:/demo:ro
+      - broker-control:/control
+      - broker-state:/state
+    healthcheck:
+      test: [CMD, node, scripts/runtime-container-health.js, broker]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+  execution:
+    <<: *runtime
+    command: [node, dist/bin/demo.js]
+    environment:
+      NODE_EXTRA_CA_CERTS: /demo/gateway-ca.pem
+    networks: [gateways]
+    volumes:
+      - demo-config:/demo:ro
+      - broker-control:/control:ro
+networks:
+  gateways:
+    internal: true
+volumes:
+  demo-config:
+  broker-control:
+  broker-state:

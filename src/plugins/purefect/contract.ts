@@ -40,6 +40,7 @@ import {
 } from "../../spi/control-plane.js";
 import type { ModelWire } from "../../spi/model-upstream.js";
 import { WEB_ACCESS_OFF, type WebAccessPolicy } from "../../spi/web-access.js";
+import { builtinHarnessWires } from "../../common/builtin-harness.js";
 
 export const EXECUTION_PROTOCOL = "purefect-ai-execution/1";
 
@@ -68,10 +69,7 @@ const CLAIM_TOKEN = /^[A-Za-z0-9_-]{32,128}$/;
 /** Harness of a Run without `run.harness` (older Engine snapshots). */
 export const DEFAULT_HARNESS = "codex";
 /** Model API each Harness this plugin knows speaks; the lease's model service must match it. */
-const HARNESS_WIRES: Readonly<Record<string, ModelWire>> = Object.freeze({
-  codex: "responses",
-  "claude-code": "anthropic-messages"
-});
+const HARNESS_WIRES: Readonly<Record<string, ModelWire>> = builtinHarnessWires();
 
 /** Host name pattern of `run.web_access.allowed_domains` (lower case, at least two labels). */
 const DOMAIN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;

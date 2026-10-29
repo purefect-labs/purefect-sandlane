@@ -14,9 +14,7 @@
  * limitations under the License.
  */
 import { readSecret } from "../common/env.js";
-import { claudeCodeLauncher } from "../harness/claude-code/claude-code-launcher.js";
-import { codexLauncher } from "../harness/codex/codex-managed-config.js";
-import type { HarnessLauncher } from "../spi/harness.js";
+import { BUILTIN_HARNESS_LAUNCHERS } from "../harness/builtin-runtime.js";
 import { brokerSettings } from "../sandbox/docker/config.js";
 import { DockerEngine } from "../sandbox/docker/docker-engine.js";
 import { SandboxBroker } from "../sandbox/docker/lifecycle.js";
@@ -28,11 +26,18 @@ if (process.platform !== "linux") throw new Error("Broker requires a dedicated L
 process.umask(0o077);
 // Launch descriptions of the Drivers this build ships; SANDLANE_BROKER_RUN_IMAGES selects which
 // of them this node runs and in which image. The Broker does not know the CLIs themselves.
-const LAUNCHERS: Readonly<Record<string, HarnessLauncher>> = { codex: codexLauncher, "claude-code": claudeCodeLauncher };
 const { images, memoryMiB, ...settings } = config;
 const harnesses = Object.fromEntries(Object.entries(images).map(([id, image]) => {
-  if (!Object.hasOwn(LAUNCHERS, id)) throw new Error(`Unknown harness ${id} in SANDLANE_BROKER_RUN_IMAGES`);
-  return [id, { image, launcher: LAUNCHERS[id]!, ...(Object.hasOwn(memoryMiB, id) ? { memoryMiB: memoryMiB[id]! } : {}) }];
+  if (!Object.hasOwn(BUILTIN_HARNESS_LAUNCHERS, id))
+    throw new Error(`Unknown harness ${id} in SANDLANE_BROKER_RUN_IMAGES`);
+  return [
+    id,
+    {
+      image,
+      launcher: BUILTIN_HARNESS_LAUNCHERS[id as keyof typeof BUILTIN_HARNESS_LAUNCHERS],
+      ...(Object.hasOwn(memoryMiB, id) ? { memoryMiB: memoryMiB[id]! } : {})
+    }
+  ];
 }));
 const broker = new SandboxBroker(new DockerEngine(config.dockerSocket, config.apiVersion), {
   ...settings,

@@ -121,7 +121,7 @@ async function listen(t, server) {
 
 /** Mock provider, model gateway (server -> ModelGateway -> LocalModelAuthority -> provider) and
  * one registered Run per Harness. `upstream(req, body, res)` answers each provider call. */
-async function setup(t, upstream, auth = "x-api-key", webAccess = undefined) {
+async function setup(t, upstream, auth = "x-api-key", webAccess = undefined, basePath = "/v1") {
   const tls = await certificate(t);
   const received = [];
   const providerPort = await listen(
@@ -150,7 +150,7 @@ async function setup(t, upstream, auth = "x-api-key", webAccess = undefined) {
   );
   const gateway = new ModelGateway(models, models, models.provider, {
     maxConcurrent: 8,
-    timeoutMs: 10_000,
+    timeoutMs: 30_000,
     receiptTimeoutMs: 1_000
   });
   const server = createModelServer(tls, "localhost", gateway, models.lookup);
@@ -171,7 +171,7 @@ async function setup(t, upstream, auth = "x-api-key", webAccess = undefined) {
         modelWire: wire,
         modelAlias: "sandlane",
         providerModel: "claude-up",
-        baseUri: `https://localhost:${providerPort}/v1`,
+        baseUri: `https://localhost:${providerPort}${basePath}`,
         enabledTools: ["metadata.get_raw"],
         ...(webAccess ? { webAccess } : {}),
         expiresAt: Date.now() + 60_000
@@ -233,12 +233,18 @@ test("Messages streams provider events verbatim and unbuffered, forwards protoco
   const released = new Promise(resolve => (release = resolve));
   const sent = [start(), frame("ping", { type: "ping" }), textStart(), delta("Hel")];
   const rest = [delta("lo"), stop(0), end()];
-  const f = await setup(t, async (req, body, res) => {
-    res.writeHead(200, { "content-type": "text/event-stream" });
-    res.write(sent.join(""));
-    await released;
-    res.end(rest.join(""));
-  });
+  const f = await setup(
+    t,
+    async (req, body, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(sent.join(""));
+      await released;
+      res.end(rest.join(""));
+    },
+    "x-api-key",
+    undefined,
+    "/apps/anthropic"
+  );
   let streamedEarly = false;
   const response = await f.call({
     headers: {
@@ -273,7 +279,7 @@ test("Messages streams provider events verbatim and unbuffered, forwards protoco
   );
 
   const [upstream] = f.received;
-  assert.equal(upstream.url, "/v1/messages?beta=true");
+  assert.equal(upstream.url, "/apps/anthropic/v1/messages?beta=true");
   assert.equal(upstream.headers["x-api-key"], MODEL_KEY);
   assert.equal(upstream.headers.authorization, undefined);
   assert.equal(upstream.headers["anthropic-version"], "2023-06-01");
