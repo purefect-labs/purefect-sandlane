@@ -3,3 +3,22 @@ Copyright © 2024-2026 杭州熵闪科技(Hangzhou Sunshine Technology Corporati
 
 This product includes software developed at
 杭州熵闪科技(Hangzhou Sunshine Technology Corporation) (https://www.purefect.cn).
+
+Project website: https://www.purefect.cn/en/opensource
+Source repository: https://github.com/purefect-labs/purefect-sandlane
+
+Purefect SandLane is licensed under the Apache License, Version 2.0.
+See the accompanying LICENSE file for the license terms.
+
+Optional container images built from this repository may include the following
+unmodified third-party command-line tools. Their upstream licenses and notices
+continue to apply:
+
+- Qwen Code, Copyright its contributors, licensed under Apache License 2.0.
+  https://github.com/QwenLM/qwen-code
+- OpenCode, Copyright its contributors, licensed under the MIT License.
+  https://github.com/anomalyco/opencode
+
+Codex and Claude Code are not part of Purefect SandLane and remain subject to
+their respective publishers' license terms. Deployers are responsible for
+reviewing the terms that apply to every CLI image they build or distribute.

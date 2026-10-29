@@ -17,12 +17,14 @@
 ARG NATIVE_CLI_IMAGE
 FROM ${NATIVE_CLI_IMAGE}
 USER 0:0
-COPY gateway-ca.crt /usr/local/share/ca-certificates/sandlane-gateway.crt
+COPY gateway-ca.crt /tmp/sandlane-gateway.crt
 RUN node <<'NODE'
 const fs = require("node:fs");
 const { X509Certificate } = require("node:crypto");
 const { rootCertificates } = require("node:tls");
-const pem = fs.readFileSync("/usr/local/share/ca-certificates/sandlane-gateway.crt", "utf8");
+const source = "/tmp/sandlane-gateway.crt";
+const installed = "/usr/local/share/ca-certificates/sandlane-gateway.crt";
+const pem = fs.readFileSync(source, "utf8");
 if (!/^\s*-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----\s*$/.test(pem)) {
   throw Error("Expected one public CA certificate, without private keys or other data");
 }
@@ -35,6 +37,9 @@ if (!ca.ca || Date.parse(ca.validFrom) > Date.now() || Date.parse(ca.validTo) <=
 const bundle = "/etc/ssl/certs/ca-certificates.crt";
 const publicRoots = fs.existsSync(bundle) ? fs.readFileSync(bundle, "utf8") : rootCertificates.join("\n");
 fs.mkdirSync("/etc/ssl/certs", { recursive: true });
+fs.mkdirSync("/usr/local/share/ca-certificates", { recursive: true });
+fs.writeFileSync(installed, pem, { mode: 0o644 });
 fs.writeFileSync(bundle, publicRoots + "\n" + pem + "\n", { mode: 0o644 });
+fs.rmSync(source);
 NODE
 USER 1000:1000

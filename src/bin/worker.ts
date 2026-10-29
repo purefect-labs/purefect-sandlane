@@ -21,32 +21,17 @@ import { isAbsolute } from "node:path";
 import { readSecret, required } from "../common/env.js";
 import { missingFunctions } from "../common/function-inventory.js";
 import { MemoryAdmission, readMemAvailable } from "../core/admission.js";
-import { RunCredentialRegistry } from "../core/credentials.js";
 import { FrozenInputContext } from "../core/turn-input.js";
 import type { LaneLog } from "../core/worker.js";
-import { ModelGateway } from "../gateway/model/gateway.js";
-import { defaultUpstreams, LocalModelAuthority } from "../gateway/model/local-authority.js";
 import type { MessagesAuth } from "../gateway/model/messages-provider.js";
-import { createModelServer } from "../gateway/model/model-server.js";
-import { ToolGateway } from "../gateway/tool/gateway.js";
-import { LocalToolAuthority } from "../gateway/tool/local-authority.js";
-import { createToolMcpServer } from "../gateway/tool/mcp-server.js";
 import {
-  CLAUDE_CODE_CAPABILITIES,
-  ClaudeCodeDriver
-} from "../harness/claude-code/claude-code-driver.js";
-import {
-  CLAUDE_CODE_FILE_FUNCTIONS,
-  CLAUDE_CODE_WEB_FUNCTIONS,
-  claudeCodeModelFunctions
-} from "../harness/claude-code/claude-code-launcher.js";
-import { CODEX_CAPABILITIES, CodexRunAdapter } from "../harness/codex/codex-adapter.js";
-import {
-  CODEX_FILE_FUNCTIONS,
-  codexModelFunctions
-} from "../harness/codex/codex-managed-config.js";
+  BUILTIN_HARNESS_METADATA,
+  builtinFileFunctionInventory,
+  builtinFunctionInventory
+} from "../common/builtin-harness.js";
 import { businessInstructions } from "../plugins/purefect/business-instructions.js";
 import { PurefectContext } from "../plugins/purefect/context.js";
+import { loadMcpToolProvider, combineToolProviders } from "../plugins/mcp/provider.js";
 import { PapiControlPlane } from "../plugins/purefect/control-plane.js";
 import type { ManagedPurefectClientFactory } from "../plugins/purefect/purefect-adapter.js";
 import {
@@ -56,13 +41,8 @@ import {
   PUREFECT_TOOL_NAMES,
   PUREFECT_TOOL_SERVER
 } from "../plugins/purefect/purefect-catalog.js";
-import {
-  BrokerSandboxLauncher,
-  type BrokerDriverFactory
-} from "../sandbox/docker/broker-sandbox.js";
-import { BrokerHarnessTransport } from "../sandbox/docker/broker-transport.js";
 import { BrokerClient } from "../sandbox/docker/client.js";
-import { createRuntime } from "../runtime/runtime.js";
+import { createManagedRuntime } from "../runtime/managed.js";
 import type { ContextProvider } from "../spi/context.js";
 import type { ReasoningEffort } from "../spi/control-plane.js";
 import type { StatusObserver } from "../spi/status.js";
@@ -148,12 +128,10 @@ async function main(): Promise<void> {
   // Harnesses this Worker drives (the lease's run.harness). The model gateway serves the entry
   // of each Driver's wire, and the lane runs one ephemeral CLI process or thread per Run; the
   // Broker decides per node which of them it has CLI images for.
-  const harnesses = { codex: CODEX_CAPABILITIES, "claude-code": CLAUDE_CODE_CAPABILITIES };
+  const harnesses = BUILTIN_HARNESS_METADATA;
   if (
     Object.values(harnesses).some(
-      capabilities =>
-        !["responses", "anthropic-messages"].includes(capabilities.modelWire) ||
-        capabilities.sessionPolicy !== "ephemeral"
+      metadata => !["responses", "anthropic-messages"].includes(metadata.wire)
     )
   )
     throw new Error("Unsupported Harness capabilities");
@@ -200,14 +178,17 @@ async function main(): Promise<void> {
   if (status.nodeId !== nodeId || status.ready !== true || status.managedLaunch !== true)
     throw new Error("Broker must be ready with managed gateways");
 
-  const registry = new RunCredentialRegistry();
   // Every tool is enabled by default: the platform authorizes each call with the Run owner's
   // short-lived token, so the user's own permissions apply. SANDLANE_ENABLED_TOOLS narrows the
   // set (the page tool, workspace_action, included). The control plane tools (propose_task,
   // report_task) are listed too: enabled by default, still offered per lease; removing them turns
   // them off.
+  const externalMcp = env.SANDLANE_MCP_CONFIG_FILE
+    ? await loadMcpToolProvider(env.SANDLANE_MCP_CONFIG_FILE)
+    : undefined;
   const catalog = [
     ...PUREFECT_TOOL_NAMES,
+    ...(externalMcp?.tools.map(tool => tool.alias) ?? []),
     ...(control.clientActions ? [control.clientActions.name] : []),
     ...(control.controlTools ?? []).map(tool => tool.name)
   ];
@@ -230,10 +211,7 @@ async function main(): Promise<void> {
     throw new Error("Invalid SANDLANE_MODEL_FUNCTION_INVENTORY");
   const functions: unknown =
     rawFunctions === undefined
-      ? {
-          codex: codexModelFunctions(toolServer, enabledTools),
-          "claude-code": claudeCodeModelFunctions(toolServer, enabledTools)
-        }
+      ? builtinFunctionInventory(toolServer, enabledTools)
       : JSON.parse(rawFunctions);
   if (
     !functions ||
@@ -255,10 +233,14 @@ async function main(): Promise<void> {
     const controlNames = (control.controlTools ?? [])
       .map(tool => tool.name)
       .filter(name => enabledTools.includes(name));
-    const missing = missingFunctions(functions as Record<string, string[]>, {
-      codex: codexModelFunctions(toolServer, controlNames),
-      "claude-code": claudeCodeModelFunctions(toolServer, controlNames)
-    });
+    controlNames.push(
+      ...(externalMcp?.tools.map(tool => tool.alias).filter(name => enabledTools.includes(name)) ??
+        [])
+    );
+    const missing = missingFunctions(
+      functions as Record<string, string[]>,
+      builtinFunctionInventory(toolServer, controlNames)
+    );
     if (missing.length)
       throw new Error(
         `SANDLANE_MODEL_FUNCTION_INVENTORY lacks the enabled control plane tools (${missing.join(", ")}): add them, or remove the tools from SANDLANE_ENABLED_TOOLS`
@@ -271,9 +253,7 @@ async function main(): Promise<void> {
   if (rawFileFunctions !== undefined && rawFileFunctions.length > 2_000)
     throw new Error("Invalid SANDLANE_MODEL_FILE_FUNCTION_INVENTORY");
   const fileFunctions: unknown =
-    rawFileFunctions === undefined
-      ? { codex: [...CODEX_FILE_FUNCTIONS], "claude-code": [...CLAUDE_CODE_FILE_FUNCTIONS] }
-      : JSON.parse(rawFileFunctions);
+    rawFileFunctions === undefined ? builtinFileFunctionInventory() : JSON.parse(rawFileFunctions);
   if (
     !fileFunctions ||
     typeof fileFunctions !== "object" ||
@@ -294,65 +274,10 @@ async function main(): Promise<void> {
 
   // Model gateway: Responses and Messages over TLS, upstream from the lease's model service.
   const modelListener = listener(env, "SANDLANE_MODEL_GATEWAY");
-  const modelAuthority = new LocalModelAuthority(
-    registry,
-    {
-      functions: functions as Record<string, string[]>,
-      // Harness tools built on the provider's web search; each Run's web access decides.
-      webFunctions: { "claude-code": CLAUDE_CODE_WEB_FUNCTIONS },
-      fileFunctions: fileFunctions as Record<string, string[]>,
-      maxOutputTokens: integer(env, "SANDLANE_MODEL_MAX_OUTPUT_TOKENS", 32_000, 16, 1_000_000)
-    },
-    defaultUpstreams(
-      messagesAuth as MessagesAuth,
-      recorder
-        ? {
-            log: (code, fields) => {
-              console.debug(
-                JSON.stringify({ type: "model-upstream", level: "debug", code, ...fields })
-              );
-              if (code === "UPSTREAM_PRECONNECTED")
-                observe({
-                  type: "upstream.preconnect",
-                  ok: true,
-                  elapsedMs: Number(fields.elapsedMs)
-                });
-              else if (code === "UPSTREAM_PRECONNECT_FAILED")
-                observe({ type: "upstream.preconnect", ok: false, error: String(fields.error) });
-            }
-          }
-        : undefined
-    )
-  );
-  const modelLimits = {
-    maxActive: modelSlots,
-    // Whole streamed call, including long reasoning; the Run deadline still applies.
-    timeoutMs: integer(env, "SANDLANE_MODEL_GATEWAY_TIMEOUT_MS", 600_000, 10_000, 1_800_000)
-  };
-  const modelGateway = new ModelGateway(modelAuthority, modelAuthority, modelAuthority.provider, {
-    maxConcurrent: modelLimits.maxActive,
-    timeoutMs: modelLimits.timeoutMs,
-    receiptTimeoutMs: 5_000
-  });
   const [modelKey, modelCert] = await Promise.all([
     pem(required(env, "SANDLANE_MODEL_GATEWAY_TLS_KEY_FILE")),
     pem(required(env, "SANDLANE_MODEL_GATEWAY_TLS_CERT_FILE"))
   ]);
-  const modelServer = createModelServer(
-    { key: modelKey, cert: modelCert },
-    required(env, "SANDLANE_MODEL_GATEWAY_HOSTNAME"),
-    // With the panel on, calls are counted (in flight, failed) around the gateway.
-    recorder
-      ? {
-          respond: (...args) => recorder.track("model", () => modelGateway.respond(...args)),
-          messages: (...args) => recorder.track("model", () => modelGateway.messages(...args))
-        }
-      : modelGateway,
-    modelAuthority.lookup,
-    value => console.info(JSON.stringify({ type: "model-timing", ...value })),
-    modelLimits
-  );
-
   // MCP tool gateway (Purefect tools and the page tool): platform calls use the Run owner's
   // current agent token; the page tool is relayed through the Run's lane.
   const toolListener = listener(env, "SANDLANE_TOOL_MCP");
@@ -380,49 +305,10 @@ async function main(): Promise<void> {
     },
     settings => new ManagedClient(settings)
   );
-  const toolAuthority = new LocalToolAuthority(
-    registry,
-    { serverId: toolServer, targetRef, targetVersion },
-    installed.adapter.tools
-  );
-  const toolGateway = new ToolGateway(
-    toolAuthority,
-    toolAuthority,
-    new Map([[toolServer, toolAuthority.bind(installed.adapter)]]),
-    { concurrent: toolSlots, timeoutMs: 30_000, receiptMs: 5_000 },
-    // Audit: tool, the API code and the outcome; never parameters or results.
-    entry => {
-      observe({ type: "run.tool", run: entry.run, ok: entry.outcome === "SUCCEEDED" });
-      console.info(
-        JSON.stringify({
-          type: "execution",
-          code: "TOOL_CALL",
-          run: entry.run,
-          tool: entry.tool,
-          ...entry.fields,
-          outcome: entry.outcome,
-          ...(entry.code ? { error: entry.code } : {}),
-          ms: entry.ms,
-          at: new Date().toISOString()
-        })
-      );
-    }
-  );
   const [toolKey, toolCert] = await Promise.all([
     pem(required(env, "SANDLANE_TOOL_MCP_TLS_KEY_FILE")),
     pem(required(env, "SANDLANE_TOOL_MCP_TLS_CERT_FILE"))
   ]);
-  const mcpServer = createToolMcpServer(
-    { key: toolKey, cert: toolCert },
-    required(env, "SANDLANE_TOOL_MCP_HOSTNAME"),
-    recorder
-      ? { invoke: (...args) => recorder.track("tool", () => toolGateway.invoke(...args)) }
-      : toolGateway,
-    toolAuthority.lookup,
-    installed.adapter.tools,
-    "sandlane-tools"
-  );
-
   const reasoningEffort = env.SANDLANE_REASONING_EFFORT;
   if (reasoningEffort !== undefined && !["low", "medium", "high"].includes(reasoningEffort))
     throw new Error("Invalid SANDLANE_REASONING_EFFORT");
@@ -445,111 +331,164 @@ async function main(): Promise<void> {
     if (!isAbsolute(directory)) throw new Error("SANDLANE_MEMORY_DIRECTORY must be absolute");
     const { openLocalMemory } = await import("../plugins/memory/runtime.js");
     const opened = await openLocalMemory(directory, env);
-    context = opened.wrap(context);
-    memory = opened;
-  }
-  const driverDefaults = {
-    ...(reasoningEffort ? { reasoningEffort: reasoningEffort as ReasoningEffort } : {}),
-    onTiming: (runId: string, phase: string, elapsedMs: number) => {
-      log("TIMING", { run: runId, phase, elapsedMs });
-      observe({ type: "run.phase", run: runId, phase, elapsedMs });
+    let closingMemory: Promise<void> | undefined;
+    memory = { close: () => (closingMemory ??= opened.close()) };
+    try {
+      context = opened.wrap(context);
+    } catch (error) {
+      await memory.close();
+      throw error;
     }
-  };
-  const drivers: Record<keyof typeof harnesses, BrokerDriverFactory> = {
-    codex: binding =>
-      new CodexRunAdapter({
-        workspace: "/workspace",
-        ...driverDefaults,
-        transport: new BrokerHarnessTransport(broker, binding)
-      }),
-    "claude-code": binding =>
-      new ClaudeCodeDriver({
-        ...driverDefaults,
-        transport: new BrokerHarnessTransport(broker, binding)
-      })
-  };
-  const launcher = new BrokerSandboxLauncher(broker, nodeId, drivers);
-  // Memory-aware claiming: a lane claims only while the host has this much memory available
-  // (typical sandbox peak plus a reserve). 0 (default) turns the check off.
-  const admissionMiB = integer(env, "SANDLANE_ADMISSION_MEMORY_MIB", 0, 0, 1_048_576);
-  const admission = admissionMiB ? new MemoryAdmission(admissionMiB * 1024 * 1024) : undefined;
-  if (admission && (await readMemAvailable()) === undefined)
-    log("ADMISSION_MEMORY_UNKNOWN", { source: "/proc/meminfo" });
-
-  let statusEndpoint:
-    | { server: ReturnType<typeof createStatusServer>; port: number; bind: string }
-    | undefined;
-  if (recorder && statusConfig) {
-    const panel = new StatusPanel(
-      recorder,
-      {
-        version: await packageVersion(),
-        startedAt,
-        runtimeId,
-        nodeId,
-        harnesses: Object.keys(harnesses)
-      },
-      signal => broker.status(signal)
-    );
-    statusEndpoint = {
-      server: createStatusServer(panel, statusConfig),
-      port: statusConfig.port,
-      bind: statusConfig.bind
-    };
-    log("STATUS_PANEL_LISTENING", {
-      bind: statusConfig.bind,
-      port: statusConfig.port,
-      auth: statusConfig.token ? "token" : "none"
-    });
   }
-  const runtime = await createRuntime({
-    controlPlane: control,
-    sandbox: launcher,
-    credentials: registry,
-    concurrency,
-    lane: {
-      runtimeId,
-      lanes,
-      enabledTools,
-      ...(env.SANDLANE_MODEL_ALIAS ? { modelAlias: env.SANDLANE_MODEL_ALIAS } : {}),
-      toolServer,
-      context,
-      admit: credential => {
-        modelAuthority.admit(credential);
-        // Claim time: open the upstream connection while the sandbox is being prepared.
-        modelAuthority.warm(credential);
-      },
-      log,
-      ...(admission ? { admission } : {})
-    },
-    ...(recorder ? { observeLane: index => recorder.lane(index) } : {}),
-    endpoints: [
-      { server: modelServer, ...modelListener },
-      { server: mcpServer, ...toolListener },
-      ...(statusEndpoint ? [statusEndpoint] : [])
-    ],
-    ...(memory ? { resources: [memory] } : {}),
-    log
-  });
-  let grace: ReturnType<typeof setTimeout> | undefined;
-  const stop = () => {
-    if (grace) return;
-    // Drain first: running Runs finish and settle; after the grace period they are cancelled.
-    runtime.drain();
-    grace = setTimeout(
-      () => void runtime.close(),
-      integer(env, "SANDLANE_DRAIN_MS", 60_000, 1_000, 600_000)
-    );
-  };
-  process.on("SIGTERM", stop);
-  process.on("SIGINT", stop);
   try {
-    await runtime.done;
+    const driverDefaults = {
+      ...(reasoningEffort ? { reasoningEffort: reasoningEffort as ReasoningEffort } : {}),
+      onTiming: (runId: string, phase: string, elapsedMs: number) => {
+        log("TIMING", { run: runId, phase, elapsedMs });
+        observe({ type: "run.phase", run: runId, phase, elapsedMs });
+      }
+    };
+    // Memory-aware claiming: a lane claims only while the host has this much memory available
+    // (typical sandbox peak plus a reserve). 0 (default) turns the check off.
+    const admissionMiB = integer(env, "SANDLANE_ADMISSION_MEMORY_MIB", 0, 0, 1_048_576);
+    const admission = admissionMiB ? new MemoryAdmission(admissionMiB * 1024 * 1024) : undefined;
+    if (admission && (await readMemAvailable()) === undefined)
+      log("ADMISSION_MEMORY_UNKNOWN", { source: "/proc/meminfo" });
+
+    let statusEndpoint:
+      | { server: ReturnType<typeof createStatusServer>; port: number; bind: string }
+      | undefined;
+    if (recorder && statusConfig) {
+      const panel = new StatusPanel(
+        recorder,
+        {
+          version: await packageVersion(),
+          startedAt,
+          runtimeId,
+          nodeId,
+          harnesses: Object.keys(harnesses)
+        },
+        signal => broker.status(signal)
+      );
+      statusEndpoint = {
+        server: createStatusServer(panel, statusConfig),
+        port: statusConfig.port,
+        bind: statusConfig.bind
+      };
+      log("STATUS_PANEL_LISTENING", {
+        bind: statusConfig.bind,
+        port: statusConfig.port,
+        auth: statusConfig.token ? "token" : "none"
+      });
+    }
+    const runtime = await createManagedRuntime({
+      controlPlane: control,
+      broker: { socket: required(env, "SANDLANE_BROKER_SOCKET"), token: brokerToken, nodeId },
+      concurrency,
+      tools: {
+        provider: externalMcp
+          ? combineToolProviders(installed.adapter, externalMcp)
+          : installed.adapter,
+        serverId: toolServer,
+        targetRef,
+        targetVersion,
+        enabled: enabledTools,
+        audit: entry => {
+          observe({ type: "run.tool", run: entry.run, ok: entry.outcome === "SUCCEEDED" });
+          console.info(
+            JSON.stringify({
+              type: "execution",
+              code: "TOOL_CALL",
+              run: entry.run,
+              tool: entry.tool,
+              ...entry.fields,
+              outcome: entry.outcome,
+              ...(entry.code ? { error: entry.code } : {}),
+              ms: entry.ms,
+              at: new Date().toISOString()
+            })
+          );
+        }
+      },
+      gateways: {
+        model: {
+          ...modelListener,
+          hostname: required(env, "SANDLANE_MODEL_GATEWAY_HOSTNAME"),
+          tls: { key: modelKey, cert: modelCert }
+        },
+        tool: {
+          ...toolListener,
+          hostname: required(env, "SANDLANE_TOOL_MCP_HOSTNAME"),
+          tls: { key: toolKey, cert: toolCert }
+        }
+      },
+      model: {
+        functions: functions as Record<string, string[]>,
+        fileFunctions: fileFunctions as Record<string, string[]>,
+        messagesAuth: messagesAuth as MessagesAuth,
+        maxOutputTokens: integer(env, "SANDLANE_MODEL_MAX_OUTPUT_TOKENS", 32_000, 16, 1_000_000),
+        timeoutMs: integer(env, "SANDLANE_MODEL_GATEWAY_TIMEOUT_MS", 600_000, 10_000, 1_800_000),
+        warmup: recorder
+          ? {
+              log: (code, fields) => {
+                console.debug(
+                  JSON.stringify({ type: "model-upstream", level: "debug", code, ...fields })
+                );
+                if (code === "UPSTREAM_PRECONNECTED")
+                  observe({
+                    type: "upstream.preconnect",
+                    ok: true,
+                    elapsedMs: Number(fields.elapsedMs)
+                  });
+                else if (code === "UPSTREAM_PRECONNECT_FAILED")
+                  observe({ type: "upstream.preconnect", ok: false, error: String(fields.error) });
+              }
+            }
+          : undefined,
+        timing: value => console.info(JSON.stringify({ type: "model-timing", ...value }))
+      },
+      ...driverDefaults,
+      ...(recorder
+        ? {
+            track: <T>(gateway: "model" | "tool", work: () => Promise<T>) =>
+              recorder.track(gateway, work)
+          }
+        : {}),
+      lane: {
+        runtimeId,
+        lanes,
+        ...(env.SANDLANE_MODEL_ALIAS ? { modelAlias: env.SANDLANE_MODEL_ALIAS } : {}),
+        context,
+        log,
+        ...(admission ? { admission } : {})
+      },
+      ...(recorder ? { observeLane: index => recorder.lane(index) } : {}),
+      endpoints: statusEndpoint ? [statusEndpoint] : [],
+      resources: [...(memory ? [memory] : []), ...(externalMcp ? [externalMcp] : [])],
+      log
+    });
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    const stop = () => {
+      if (grace) return;
+      // Drain first: running Runs finish and settle; after the grace period they are cancelled.
+      runtime.drain();
+      grace = setTimeout(
+        () => void runtime.close(),
+        integer(env, "SANDLANE_DRAIN_MS", 60_000, 1_000, 600_000)
+      );
+    };
+    process.on("SIGTERM", stop);
+    process.on("SIGINT", stop);
+    try {
+      await runtime.done;
+    } finally {
+      clearTimeout(grace);
+      process.off("SIGTERM", stop);
+      process.off("SIGINT", stop);
+      await runtime.close();
+    }
   } finally {
-    clearTimeout(grace);
-    process.off("SIGTERM", stop);
-    process.off("SIGINT", stop);
-    await runtime.close();
+    await memory?.close();
   }
 }
 

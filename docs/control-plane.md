@@ -1,5 +1,10 @@
 # 执行内核与 Engine 契约（claim / sync / complete）
 
+通用 `ControlPlane` SPI 与 `createManagedRuntime` 不要求 Purefect Engine；其他控制面可实现
+claim/readLease/sync/complete，参考[独立接入](./standalone.md)与[Demo](./demo.md)。
+SPI 为兼容保留部分历史字段，`conversation_id` 在独立实现中是适配器提供的不透明会话标识。
+以下版本化 schema 与业务规则属于 Purefect 插件，两种入口共享通用执行组装。
+
 当前对接 Engine 契约 `purefect-ai-execution/1`。本仓库版本化制品
 `contract/ai-execution-v1.schema.json` 是 SandLane 构建和独立 CI 使用的唯一副本；插件解析测试始终
 按该制品执行，不依赖兄弟仓库。存在同级 `purefect-platform` checkout 时，测试另与 Engine 副本逐字节
@@ -26,20 +31,20 @@ Purefect 平台升级契约后：
 | 组件 | 文件 | 说明 |
 | --- | --- | --- |
 | PAPI 客户端 | `src/plugins/purefect/control-plane.ts`（契约解析 `contract.ts`） | `POST {origin}/papi/{site}/{tenant}/pf.ai.worker.ExecutionDomain::{claim\|sync\|output\|propose\|complete}`，请求头 `X-Purefect-Service-Token: <id>:<secret>`，请求体即契约对象；解析平台 `Response` 信封，错误转为带 `fault` 的 `ControlPlaneError`（gap 附 `expected`），不带响应正文、URL 或凭据 |
-| 执行 lane | `src/core/worker.ts` | 每条 lane：长轮询 claim（失败退避 ≤5 秒带抖动）→ 登记凭据 → Broker 按租约 `run.harness` 分配沙箱 → sync(`started`)（与 CLI 初始化并行）→ 驱动 CLI（Codex 或 Claude Code）→ ≤1 秒 sync（新增文字/页面动作立即触发）→（文件模式）回合结束、CLI 停止时读取生成文件 → 撤销凭据 →（文件模式）逐个 output → 停止沙箱 → complete（重试） |
+| 执行 lane | `src/core/worker.ts` | 每条 lane：长轮询 claim（失败退避 ≤5 秒带抖动）→ 登记凭据 → Broker 按租约 `run.harness` 分配沙箱 → sync(`started`)（与 CLI 初始化并行）→ 驱动内置 Harness → ≤1 秒 sync（新增文字/页面动作立即触发）→（文件模式）回合结束、CLI 停止时读取生成文件 → 撤销凭据 →（文件模式）逐个 output → 停止沙箱 → complete（重试） |
 | 凭据登记 | `src/core/credentials.ts` | 运行时内存，capability → Run；密钥在私有字段，`JSON.stringify` / `inspect` 不可见；sync 续发令牌即替换；撤销或租约过期即中止下游请求 |
-| 模型网关 | `src/gateway/model/local-authority.ts` + `model-server`/`gateway` | 同一 TLS 监听两个入口：`/v1/responses`（Codex）与 `/v1/messages`（Claude Code，见 [Claude Code 支持](./claude-code.md)）；capability 只能用于其 Run 的协议入口；每个 (协议, `base_uri`) 一个上游客户端；累计用量供 complete |
+| 模型网关 | `src/gateway/model/local-authority.ts` + `model-server`/`gateway` | 同一 TLS 监听两个入口：`/v1/responses`（Codex、Qwen Code、OpenCode）与 `/v1/messages`（Claude Code，见 [Claude Code 支持](./claude-code.md)）；capability 只能用于其 Run 的协议入口；每个 (协议, `base_uri`) 一个上游客户端；累计用量供 complete |
 | MCP 网关 | `src/gateway/tool/local-authority.ts` + 现有 `mcp-server`/`gateway` | Purefect 工具（`purefect_call` 与 API 文档，默认全部开放）使用执行人当前 `agent_token`，权限由平台按该用户判断；令牌过期或撤销后拒绝新调用并中止进行中的调用。页面动作 `workspace_action` 也在这里提供，经该 Run 的 lane 转给浏览器；会话内委派的 `propose_task` / `report_task` 同样经该 Run 的 lane 走控制面。见 [工具与页面动作](./tools-and-page-actions.md) |
 | 沙箱 | `src/sandbox/docker/broker-sandbox.ts` | `BrokerClient.allocateManaged`（RunSpec v2 + RunAuthorization），容器内只有两个 43 位 capability；Broker 租约跟随 `lease_until` 续期 |
 
 ## 语义要点
 
 - **领取幂等**：claim 失败（未拿到响应）时用同一 `claim_token` 重试，Engine 返回同一批作业；拿到响应后才换新凭证。
-- **Harness**：租约 `run.harness`（缺省 `codex`）选择 Driver 与 Broker 上的 CLI 镜像；`model_service.wire_api` 须与之匹配（`codex`↔`responses`、`claude-code`↔`anthropic-messages`，Purefect 插件校验，不匹配按无效租约结算）。本 Worker 无对应 Driver、Broker 无对应镜像，或 Driver 的协议与租约不符时，以 `FAILED`（`harness_unavailable`）结算，不重试。
+- **Harness**：租约 `run.harness`（缺省 `codex`）选择 Driver 与 Broker 上的 CLI 镜像；`model_service.wire_api` 须与之匹配（`codex` / `qwen-code` / `opencode` ↔ `responses`，`claude-code` ↔ `anthropic-messages`，Purefect 插件校验，不匹配按无效租约结算）。本 Worker 无对应 Driver、Broker 无对应镜像，或 Driver 的协议与租约不符时，以 `FAILED`（`harness_unavailable`）结算，不重试。
 - **已开始**：沙箱分配成功（输入已交付）后用 `started: true` 上报一次。CLI 初始化（Codex 建线程；Claude Code 的 initialize 与推理强度控制请求）与上报并行，首个模型请求（Codex `turn/start`、Claude Code 首条用户消息）等 Engine 确认后才发送；未确认（取消、租约丢失、停机）则不开始回合。之前的失败不会执行任何东西。分配期间每 5 秒心跳续租；心跳收到 `cancel` 立即中止分配并以 `CANCELLED` 结算。
 - **事件**：上报 `assistant.message.delta` 与脱敏的 `runtime.item.*`，`offset` 为第一条事件的连续序号；收到 `ai_event_offset_gap` 按 `expected` 从内存中重发。文字增量合并后上报，答案上限 200000 字节（JSON 转义后 UTF-8），超出部分丢弃但 Run 照常结束（日志 `ANSWER_TRUNCATED`）；工具活动事件上限 1024 条，超出视为输出无效。
 - **联网访问**：租约 `run.web_access`（提交时冻结，缺省视为不能联网）解析为 SPI `WebAccessPolicy`（`open` / `allowlist` / `off`），登记在 Run 的凭据上；模型网关按 Run 保留、收窄或移除模型服务自带的联网搜索工具，沙箱本身始终不联网。详见 [联网访问](./web-access.md)。
-- **页面动作**：`workspace_action` 是工具网关的 MCP 工具，Codex 与 Claude Code 通用；本轮是否提供、可用操作由 `ui_context` 决定。调用经该 Run 的 lane 放入下一次 sync 的 `action_requests`，之后以 `awaiting_actions` + `wait_ms` 长轮询回执；`VOID` 回执转为 `failed/unavailable`。详见 [工具与页面动作](./tools-and-page-actions.md)。
+- **页面动作**：`workspace_action` 是工具网关的 MCP 工具，四种内置 Harness 通用；本轮是否提供、可用操作由 `ui_context` 决定。调用经该 Run 的 lane 放入下一次 sync 的 `action_requests`，之后以 `awaiting_actions` + `wait_ms` 长轮询回执；`VOID` 回执转为 `failed/unavailable`。详见 [工具与页面动作](./tools-and-page-actions.md)。
 - **后台 Run**（`run.source.type` 为 `task`、`todo`、`schedule`、`mail`：派单服务派给数字员工的任务、计划触发的后台任务、待办、收到的邮件等）：没有浏览器在线。由 ControlPlane 的 `clientActions.attended()` 判定（Purefect 插件：只有 `source.type = conversation` 或没有来源（旧 Engine、不认识的类型）才算在线），lane 据此：不提供 `workspace_action`（即使输入里带页面上下文），指令里不写页面动作与动作链接；需要确认的接口不登记浏览器确认通道，调用立即判为 `unattended`（`CONFIRMATION_UNATTENDED`），不发 `action_requests`、不调用接口。对话类 Run 不变。见 [工具与页面动作](./tools-and-page-actions.md)“任务类 Run 的工具差异”。
 - **Run 来源**（租约 `run.source`，可选）：`{type, ref}`，`type` 为 `conversation`、`task`、`todo`、`schedule`、`mail` 之一，`ref` 可以没有或为 `null`。旧 Engine 不下发、或类型不认识（更新的 Engine）时视为没有来源，不提供任何委派工具，Run 照常执行；`ref` 不是一行有界文字时丢弃 `ref`（Worker 不读它）。只有 `source` 不是对象时租约无效。容忍的内容记日志 `LEASE_ADJUSTED`（`adjustment` 为 `source_type_unknown`、`source_ref_invalid`、`mentions_truncated`、`mention_name_missing`），不记内容。
 - **提及成员**（`run.input.mentions`）：超过 10 个时只保留前 10 个，名字缺失或为空时按空串处理（给模型的说明写“未提供姓名”），都不拒绝租约；名字中的控制字符、格式字符（含双向控制符、零宽字符）与行/段分隔符换成空格，按 JSON 字符串引用。
@@ -97,7 +102,7 @@ Purefect 平台升级契约后：
 | `SANDLANE_CONCURRENCY` | 否 | 并行执行 lane 数，默认 1，最大 16 |
 | `SANDLANE_ADMISSION_MEMORY_MIB` | 否 | 按内存接活：宿主 `MemAvailable` 低于此值（MiB）时 lane 暂不领取，默认 0（关闭），见 [配置参考](./configuration.md) |
 | `SANDLANE_ENABLED_TOOLS` | 否 | 启用的工具，默认全部（`purefect_call,list_api_docs,read_api_doc,read_skill,workspace_action,propose_task,report_task`），配置后收紧 |
-| `SANDLANE_REASONING_EFFORT` / `PUREFECT_INSTRUCTION_PROFILE` | 否 | 默认推理强度（low/medium/high，租约中的值优先，Codex 与 Claude Code 通用）与指令档案（default/business） |
+| `SANDLANE_REASONING_EFFORT` / `PUREFECT_INSTRUCTION_PROFILE` | 否 | 默认推理强度（low/medium/high，租约中的值优先，四种内置 Harness 均映射；最终支持取决于 CLI 与模型）与指令档案（default/business） |
 | `SANDLANE_DRAIN_MS` | 否 | SIGTERM 后等待进行中 Run 的时间，默认 60000 |
 | `SANDLANE_BROKER_SOCKET` / `SANDLANE_BROKER_SERVICE_TOKEN[_FILE]` / `SANDLANE_BROKER_NODE_ID` | 是 | 节点本地 Broker；Broker 须配置 `SANDLANE_BROKER_MANAGED_GATEWAYS` |
 | `SANDLANE_MODEL_GATEWAY_BIND` / `_PORT` / `_HOSTNAME` / `_TLS_KEY_FILE` / `_TLS_CERT_FILE` | 是 | 模型网关 TLS 监听（与 `SANDLANE_BROKER_MANAGED_GATEWAYS.modelBaseUrl` 对应） |
@@ -116,4 +121,4 @@ Purefect 平台升级契约后：
 
 - 租约中的身份没有成员 ID（t_aid），工具许可中暂以 user_id 占位（下游适配器仅做形状校验，实际权限由 agent_token 决定）。
 - 长期记忆（`src/plugins/memory`）作为 ContextProvider 装饰器可选接入（`SANDLANE_MEMORY_ENABLED=true` + `SANDLANE_MEMORY_DIRECTORY`），默认关闭；对话历史由 Engine 在输入中冻结。
-- 未在真实 Docker / Engine 上做端到端验收；Docker 验证脚本中依赖旧链路的 `sandbox-docker-validation`、`broker-channel-validation` 已删除，待按新内核重写。
+- 公共 CI 使用真实 Docker、Broker、Relay、TLS 模型网关和 MCP 网关运行独立 fixture，覆盖成功、取消与租约丢失；fixture 使用模拟 CLI 和模型，不代表真实 CLI、真实模型或 Purefect 平台端到端验收。Purefect 参考集成的实际验收范围见[集成说明](./integrations/purefect.md)。

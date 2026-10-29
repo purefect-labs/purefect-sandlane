@@ -35,8 +35,53 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate:
+    name: Validate release candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Verify tagged commit and version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+          grep -F "## [${GITHUB_REF_NAME#v}]" CHANGELOG.md
+
+      - name: Install pinned dependencies
+        run: npm ci
+
+      - name: Check syntax and types
+        run: npm run check
+
+      - name: Check built-in Harnesses
+        run: npm run check:harnesses
+
+      - name: Check runtime formatting
+        run: npm run format:runtime:check
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev
+
+      - name: Validate package contents and consumer
+        run: npm run package:check
+
   publish:
     name: Publish ${{ matrix.name }} image
+    needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -44,11 +89,19 @@ jobs:
       matrix:
         include:
           - name: runtime
-            dockerfile: Dockerfile.runtime
+            dockerfile: deploy/Dockerfile.runtime
             image: ghcr.io/purefect-labs/purefect-sandlane-runtime
           - name: relay
-            dockerfile: Dockerfile.relay
+            dockerfile: deploy/Dockerfile.relay
             image: ghcr.io/purefect-labs/purefect-sandlane-relay
+          - name: qwen-code
+            dockerfile: deploy/Dockerfile.cli-qwen
+            image: ghcr.io/purefect-labs/purefect-sandlane-qwen-code
+            build_args: QWEN_CODE_VERSION=0.26.3
+          - name: opencode
+            dockerfile: deploy/Dockerfile.cli-opencode
+            image: ghcr.io/purefect-labs/purefect-sandlane-opencode
+            build_args: OPENCODE_VERSION=1.19.5
 
     steps:
       - name: Check out repository
@@ -64,10 +117,6 @@ jobs:
 
       - name: Build relay inputs
         run: npm run build
-
-      - name: Verify release tag matches package version
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
@@ -98,6 +147,7 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
+          build-args: ${{ matrix.build_args || '' }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
@@ -106,3 +156,49 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
           provenance: mode=max
           sbom: true
+
+  release:
+    name: Create GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [validate, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Build release package
+        run: |
+          npm ci
+          npm run build
+          mkdir release
+          npm pack --ignore-scripts --pack-destination release
+          cd release
+          sha256sum *.tgz > SHA256SUMS
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v heading="## [$VERSION]" \
+            '$0 == heading { emit = 1; next } emit && /^## \[/ { exit } emit' \
+            ../CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+          test -s "$RUNNER_TEMP/release-notes.md"
+
+      - name: Create or repair GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/release-notes.md"
+            gh release upload "$GITHUB_REF_NAME" release/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release/* \
+              --verify-tag \
+              --title "Purefect SandLane $GITHUB_REF_NAME" \
+              --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi

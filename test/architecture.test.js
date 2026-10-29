@@ -69,11 +69,29 @@ function check(file, { specifier, typeOnly }) {
   if (target.startsWith("..")) return "import leaves src/";
   const to = unitOf(target);
   if (to === unit) return undefined;
+  if (unit === "harness/builtin-runtime.ts")
+    return to === "spi" || to === "common" || to.startsWith("harness/")
+      ? undefined
+      : "the built-in Harness composition imports only Harness implementations, spi/ and common/";
+  if (["harness/qwen-code", "harness/opencode"].includes(unit) && to === "harness/single-shot")
+    return undefined;
   if (unit === "common") return "common/ imports only common/";
   if (unit === "spi")
     return to === "common" && typeOnly ? undefined : "spi/ imports only types from common/";
   if (unit === "runtime")
-    return ["core", "spi", "common"].includes(to)
+    return ["core", "spi", "common"].includes(to) ||
+      (file === "runtime/managed.ts" &&
+        [
+          "sandbox/docker",
+          "harness/codex",
+          "harness/claude-code",
+          "harness/qwen-code",
+          "harness/opencode",
+          "harness/single-shot",
+          "harness/builtin-runtime.js",
+          "gateway/model",
+          "gateway/tool"
+        ].includes(to))
       ? undefined
       : "runtime/ imports only core/, spi/, common/ and its own directory";
   if (to === "spi" || to === "common") return undefined;
@@ -84,7 +102,9 @@ test("source tree only contains classified dependency units", () => {
   const unknown = sources().filter(
     file =>
       !KNOWN.has(file.split("/")[0]) ||
-      (NESTED.has(file.split("/")[0]) && file.split("/").length < 3)
+      (NESTED.has(file.split("/")[0]) &&
+        file.split("/").length < 3 &&
+        file !== "harness/builtin-runtime.ts")
   );
   assert.deepEqual(unknown, [], "unclassified source files (add them to a unit)");
 });
@@ -245,8 +265,8 @@ test("both CLI images install the same pinned document tools for file mode", () 
     assert.ok(text.indexOf("PYTHON_DOC_TOOLS") < text.lastIndexOf("USER 1000:1000"), file);
     return match[1].split(" ");
   };
-  const codex = pins("Dockerfile.cli");
-  assert.deepEqual(pins("Dockerfile.cli-claude"), codex);
+  const codex = pins("deploy/Dockerfile.cli");
+  assert.deepEqual(pins("deploy/Dockerfile.cli-claude"), codex);
   for (const name of [
     "pypdf",
     "pdfplumber",
@@ -266,14 +286,34 @@ test("both CLI images install the same pinned document tools for file mode", () 
   );
 });
 
+test("runtime composition never reads ambient process configuration or installs signal handlers", () => {
+  for (const file of sources().filter(file => file.startsWith("runtime/"))) {
+    const code = readFileSync(path.join(SRC, file), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    assert.doesNotMatch(code, /process\s*\.\s*(env|on|once|addListener)\b/, file);
+  }
+});
+
 test("distributed images carry the SandLane license and notice", () => {
   for (const file of [
-    "Dockerfile.runtime",
-    "Dockerfile.relay",
-    "Dockerfile.cli",
-    "Dockerfile.cli-claude"
+    "deploy/Dockerfile.runtime",
+    "deploy/Dockerfile.relay",
+    "deploy/Dockerfile.cli",
+    "deploy/Dockerfile.cli-claude",
+    "deploy/Dockerfile.cli-qwen",
+    "deploy/Dockerfile.cli-opencode"
   ]) {
     const text = readFileSync(path.join(ROOT, file), "utf8");
     assert.match(text, /COPY LICENSE NOTICE /, file);
   }
+  const openCode = readFileSync(path.join(ROOT, "deploy/Dockerfile.cli-opencode"), "utf8");
+  assert.match(
+    openCode,
+    /COPY deploy\/licenses\/opencode-LICENSE \/usr\/share\/doc\/opencode\/LICENSE/
+  );
+  assert.match(
+    readFileSync(path.join(ROOT, "deploy/licenses/opencode-LICENSE"), "utf8"),
+    /^MIT License\n\nCopyright \(c\) 2025 opencode\n/
+  );
 });

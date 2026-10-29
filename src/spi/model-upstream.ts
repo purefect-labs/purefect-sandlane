@@ -19,6 +19,17 @@
 
 export type ModelWire = "responses" | "anthropic-messages" | "chat-completions";
 
+/** Trusted deployment extension, never loaded from user input or lease module names.
+ * Implementations must preserve credential isolation, cancellation, bounded streams,
+ * approved tool inventory and validated usage/terminal events. A factory is shared by Runs:
+ * do not store per-Run secrets or mutable request state on cached upstream instances.
+ * Chat Completions is not implemented by the bundled gateway; conversion requires a
+ * separately tested adapter implementing the selected Harness wire contract. */
+export interface ModelUpstreamFactory {
+  responses(baseUri: string): ModelUpstream;
+  messages(baseUri: string): MessagesUpstream;
+}
+
 /** Stateless, text/function-only Responses request accepted by the gateway entry codec. */
 export interface ManagedResponsesRequest {
   readonly model: string;

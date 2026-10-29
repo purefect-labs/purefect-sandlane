@@ -7,14 +7,18 @@
 # 安装与启动
 
 当前 SandLane 由 Worker、Linux 节点 Broker，以及隔离网络模式下的 Relay 组成。仓库没有一条命令
-自动部署整套生产拓扑；部署者需要提供 CLI 镜像、TLS 证书、Secret 和 Purefect 控制面配置。
+自动部署整套生产拓扑；部署者需要提供 CLI 镜像、TLS 证书、Secret 和所选控制面配置。
+
+首次体验请用[独立 Demo](./demo.md)：`npm ci && npm run demo`，不需要 Purefect 或模型凭据。
+第三方接入见[公共 API](./standalone.md)。以下环境模板和 Worker 启动步骤针对
+[Purefect 参考集成](./integrations/purefect.md)，不是独立运行的必需条件。
 
 ## 1. 环境要求
 
-- Node.js 20 或更高版本；
+- 通用 runtime 支持 Node.js 20+；完整测试、Demo 和 SQLite 记忆使用 Node.js 22+；
 - `npm ci` 所需的 npm registry 访问；
-- Broker 所在节点为 Linux，安装 Docker Engine，并允许 Broker 访问 Docker Unix socket；
-- 按 sha256 digest 固定的 Codex 或 Claude Code CLI 镜像；
+- Broker 所在节点为 Linux，安装 Docker Engine 28+，并允许 Broker 访问 Docker Unix socket；
+- 按 sha256 digest 固定的 Codex、Claude Code、Qwen Code 或 OpenCode CLI 镜像；
 - Worker 模型网关和 MCP 网关使用的 TLS 私钥与证书；
 - 可访问的 Purefect Engine HTTPS origin 和 PurefectClient 模块。
 
@@ -35,9 +39,11 @@ npm test
 
 runtime 与 relay Dockerfile 已提供按 digest 固定的 Node 基础镜像默认值；本机构建不需要额外传参：
 
+构建与Compose文件位于[`deploy/`](../deploy/README.md)，以下命令从仓库根目录执行，构建上下文仍是根目录。
+
 ```bash
-docker build -f Dockerfile.runtime -t purefect/ai-runtime:local .
-docker build -f Dockerfile.relay -t purefect/sandlane-relay:local .
+docker build -f deploy/Dockerfile.runtime -t purefect/ai-runtime:local .
+docker build -f deploy/Dockerfile.relay -t purefect/sandlane-relay:local .
 ```
 
 如需使用经过内部镜像仓库同步的基础镜像，可用 `--build-arg NODE_IMAGE=<image@sha256:digest>` 覆盖，
@@ -47,10 +53,13 @@ docker build -f Dockerfile.relay -t purefect/sandlane-relay:local .
 时发布以下 amd64/arm64 镜像，并生成 SBOM 与 provenance：
 
 - `ghcr.io/purefect-labs/purefect-sandlane-runtime:<version>`；
-- `ghcr.io/purefect-labs/purefect-sandlane-relay:<version>`。
+- `ghcr.io/purefect-labs/purefect-sandlane-relay:<version>`；
+- `ghcr.io/purefect-labs/purefect-sandlane-qwen-code:<version>`；
+- `ghcr.io/purefect-labs/purefect-sandlane-opencode:<version>`。
 
-仓库管理员也可从 Actions 手动触发并指定临时 tag。Codex 与 Claude Code CLI 镜像不会由该流程公开
-发布；部署者须确认第三方版本和分发条款后自行构建并固定 digest。
+仓库管理员也可从 Actions 手动触发并指定临时 tag。Qwen Code 和 OpenCode 使用固定的上游版本；
+它们的镜像 tag 与 SandLane 发布版本一致，实际 CLI 版本见镜像 label 和发布说明。Codex 与 Claude Code
+CLI 镜像不会由该流程公开发布；部署者须确认第三方版本和分发条款后自行构建并固定 digest。
 
 ## 3. 配置
 
@@ -73,6 +82,10 @@ node --env-file=.env.local dist/bin/worker.js
 必须不同。具体变量见[配置参考](./configuration.md)。
 
 ## 4. 启动顺序
+
+Compose 部署须同时使用 `deploy/compose.runtime.yaml` 和 `deploy/compose.purefect.yaml`，按照
+[参考部署](./integrations/purefect.md#managed-compose-参考部署)先启动 Relay、核验并生成 binding，
+再启动 Broker 和 Worker。基础清单不能单独满足 managed 网络要求。
 
 ### Relay（仅 isolated 网络）
 

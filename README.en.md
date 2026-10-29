@@ -8,9 +8,17 @@
 
 [English](./README.en.md) | [简体中文](./README.md)
 
-Purefect SandLane is a self-hosted Agent CLI execution plane designed for multi-tenant, multi-user control planes. It runs tools such as Codex and Claude Code in ephemeral containers while keeping provider API keys and user tokens inside a trusted Worker process.
+[Documentation](./docs/README.md) · [Quick start](./docs/demo.md) · [Purefect Labs open source](https://www.purefect.cn/en/opensource)
+
+Purefect SandLane is a self-hosted Agent CLI execution plane designed for multi-tenant, multi-user control planes. It runs Codex, Claude Code, Qwen Code, and OpenCode in ephemeral containers while keeping provider API keys and user tokens inside a trusted Worker process.
 
 The Worker claims Runs from a control plane and gives each sandbox only short-lived, Run-scoped capabilities. Model requests and MCP tool calls pass through gateways that validate those capabilities before forwarding traffic upstream. SandLane therefore separates untrusted CLI execution from long-lived credentials and business systems without requiring the CLI container to have direct Internet access.
+
+Model providers and Agent CLIs are configured separately; SandLane is not limited to OpenAI or Anthropic models. Chinese providers such as DeepSeek, GLM, and Qwen can connect through compatible Responses or Anthropic Messages endpoints. Configure the endpoint, model name, and API key in your control plane. DeepSeek `deepseek-flash` has passed real text and MCP tool smoke tests with all four built-in CLIs: Codex, Claude Code, Qwen Code, and OpenCode. Live GLM and Qwen model-service calls remain unverified, and the selected model and plan must support the required protocol. See the [model integration guide](./docs/model-providers.md) for setup and limitations.
+
+Model extensions are not limited to these providers: Kimi (Moonshot AI), Google Gemini, and others are also potential integration targets. SandLane already implements a trusted Worker-side `ModelUpstreamFactory` extension point. Services matching the existing protocols can be configured directly; different native protocols or authentication schemes require an upstream adapter that maps requests, streaming responses, tool calls, and usage to the existing gateway contract. Kimi and Gemini have not been verified, and dedicated protocol adapters are not bundled. Chat Completions compatibility alone does not make a service directly usable with the existing Drivers.
+
+Agent CLIs are extensible too. Codex, Claude Code, Qwen Code, and OpenCode are built in. The latter two provide Apache-2.0/MIT open-source CLI paths, use the Responses gateway, and initially expose only Run-authorized MCP tools. Another CLI still requires an explicit `HarnessDriver`, launch configuration, pinned image, and compatibility tests; changing a tool name is not enough. See [Qwen Code and OpenCode](./docs/qwen-code-and-opencode.md) and the [standalone integration guide](./docs/standalone.md).
 
 [![CI](https://github.com/purefect-labs/purefect-sandlane/actions/workflows/ci.yml/badge.svg)](https://github.com/purefect-labs/purefect-sandlane/actions/workflows/ci.yml)
 
@@ -41,6 +49,8 @@ Version tags publish multi-architecture images through GitHub Actions:
 
 - `ghcr.io/purefect-labs/purefect-sandlane-runtime`
 - `ghcr.io/purefect-labs/purefect-sandlane-relay`
+- `ghcr.io/purefect-labs/purefect-sandlane-qwen-code`
+- `ghcr.io/purefect-labs/purefect-sandlane-opencode`
 
 These entry points do not load `.env.local` automatically. Inject configuration explicitly with `node --env-file=.env.local ...`, a systemd `EnvironmentFile`, or container-platform secrets. See [Installation and startup](./docs/installation.md) and [Configuration reference](./docs/configuration.md) for the current deployment requirements.
 
@@ -73,7 +83,24 @@ Worker process
                           model gateway + MCP gateway
 ```
 
+## Standalone demo
+
+With Node.js 22+, Docker Engine 28+ (or a matching Docker Desktop), and Compose installed, run:
+
+```bash
+npm ci
+npm run demo
+```
+
+No Purefect Engine, sibling repository, or model account is required. An in-memory control plane and protocol fixture exercise real Docker, Broker, Relay, TLS model and MCP requests. The demo removes its containers, networks, and volumes afterward. It is not actual Claude Code or a production control plane. See [the demo guide](./docs/demo.md) for cancellation, lease loss, and optional real CLI mode. Documentation other than this README is maintained in Chinese.
+
+For interactive answers from a real model, use `npm run demo:chat -- ...` with an explicit CLI image, model endpoint, model identifier, and key file. The terminal displays the answer, CLI version, configured model identifier, elapsed time, and token usage when available. Each question runs independently without history and incurs provider charges. See [interactive setup](./docs/demo.md#交互式真实模型问答).
+
 ## Integrating another control plane
+
+External MCP tools can use administrator-configured Streamable HTTP services or preinstalled stdio programs. Sandboxes share services/programs while credentials and client sessions are isolated per invocation using tenant/user bindings. The existing Purefect Client integration remains available. See the [MCP setup guide](./docs/mcp.md) for configuration and limitations.
+
+The experimental `@purefect/sandlane/runtime/managed` export provides `createManagedRuntime(options)`. Supply your control plane, tools, context, Broker, and TLS configuration to reuse the bundled Docker, Harness, and gateway implementations. See [standalone integration](./docs/standalone.md) for examples and tarball installation. Use the lower-level API below for other sandbox implementations.
 
 The `@purefect/sandlane/runtime` package exports `createRuntime(options)`. The caller explicitly supplies the `ControlPlane`, `ContextProvider`, `SandboxProvider`, credential registry, execution lanes, gateway endpoints, and resources that must close with the runtime. The returned handle exposes `drain()`, `close()`, and `done`.
 
@@ -90,6 +117,20 @@ Control-plane `agent_token` values and model API keys remain in Worker memory. T
 The Broker supports `none` and `isolated` network modes. The bundled Worker composition uses an isolated network, a Relay binding, and managed gateway policy. The Relay holds no provider key, user token, or Run credential. Model-hosted web search is restricted by lease policy at the model gateway; it does not give the sandbox arbitrary network access.
 
 The default sandbox implementation uses Docker and provides a container-level isolation boundary. Deployments handling hostile tenants or highly sensitive workloads can implement the `SandboxProvider` SPI and a custom composition to use tenant-dedicated nodes, virtual machines, microVMs, or another stronger isolation mechanism. Those implementations are not included in this repository and must independently verify resource enforcement, network isolation, credential cleanup, cancellation, lease loss, and failure recovery.
+
+## Using other model providers
+
+Agent CLIs and model providers are configured separately: Codex, Qwen Code, and OpenCode use
+Responses; Claude Code uses Anthropic Messages. Compatible DeepSeek, GLM, and Qwen endpoints can
+reuse these protocol paths through the SandLane gateway, keeping real API keys in the Worker. A new
+model brand does not require a new CLI or Sandbox Agent.
+
+See the [model integration guide](./docs/model-providers.md) for endpoints, region/plan restrictions,
+authentication, verification commands, and the trusted `ModelUpstreamFactory` extension. DeepSeek
+`deepseek-flash` passed both protocol probes and real Docker text/MCP smoke tests with Codex,
+Claude Code, Qwen Code, and OpenCode.
+GLM and Qwen have offline protocol coverage only; their live combinations remain unverified.
+Chat Completions compatibility alone does not establish Responses compatibility.
 
 ## File mode
 
@@ -110,14 +151,20 @@ npm test
 
 ## Documentation
 
+- [Documentation index](./docs/README.md)
+- [Standalone demo](./docs/demo.md)
+- [Standalone integration and public API](./docs/standalone.md)
+- [Purefect reference integration](./docs/integrations/purefect.md)
 Detailed operational documentation is currently available in Simplified Chinese:
 
 - [Installation and startup](./docs/installation.md)
 - [Configuration reference](./docs/configuration.md)
+- [Model providers and compatibility checks](./docs/model-providers.md)
 - [Operations](./docs/operations.md)
 - [Execution runtime and Purefect contract](./docs/control-plane.md)
 - [Web access](./docs/web-access.md)
 - [Claude Code support](./docs/claude-code.md)
+- [Qwen Code and OpenCode](./docs/qwen-code-and-opencode.md)
 - [Tools and page actions](./docs/tools-and-page-actions.md)
 - [Status panel](./docs/status-panel.md)
 - [Memory integration](./docs/memory.md)
@@ -128,10 +175,17 @@ Detailed operational documentation is currently available in Simplified Chinese:
 
 SandLane is an execution plane, not a complete cloud platform. The integrating control plane remains responsible for identity, business authorization, durable queueing, billing, audit policy, and general-purpose scheduling.
 
-- The bundled command-line Worker directly composes the Purefect plugin. Other control planes must build their own composition with the generic runtime API.
+- `runtime:purefect` is platform-specific; the standalone demo and managed API do not depend on Purefect. The SPI retains v1 compatibility fields and some historical business semantics.
 - The Worker does not durably persist or replay Run state. If the process stops, it does not replay the prompt; the control plane must arbitrate the final state of an already-started Run.
 - The built-in SQLite memory provider is for single-host deployments. Shared deployments require an external implementation.
-- End-to-end Docker and control-plane validation is not part of the default CI suite. Before production use, validate the images, Relay, TLS, resource limits, shutdown behavior, lease-loss paths, and failure recovery on the target Linux environment.
+- CI exercises credential-free Docker fixtures for success, cancellation, and lease loss. It does not validate real providers or the Purefect platform. Before production use, validate actual CLIs, the control plane, resource limits, and failure recovery on the target Linux environment.
+
+## Project and community
+
+SandLane is Purefect's open-source Agent CLI execution component, usable independently or with different control planes.
+Visit [Purefect Labs open source](https://www.purefect.cn/en/opensource) for product and project background.
+SandLane's usage guides and technical details live in the [repository documentation](./docs/README.md).
+Report issues and suggest features through [GitHub Issues](https://github.com/purefect-labs/purefect-sandlane/issues).
 
 ## License
 

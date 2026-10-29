@@ -27,6 +27,8 @@ x-runtime: &runtime
   stop_grace_period: 30s
   restart: unless-stopped
 
+# Purefect base only: combine with compose.purefect.yaml and verified Relay binding.
+# See ../docs/integrations/purefect.md; standalone users should run npm run demo.
 services:
   init:
     <<: *runtime
@@ -40,8 +42,8 @@ services:
   broker:
     <<: *runtime
     build:
-      context: .
-      dockerfile: Dockerfile.runtime
+      context: ..
+      dockerfile: deploy/Dockerfile.runtime
       args:
         NODE_IMAGE: ${RUNTIME_NODE_IMAGE:?Set a pinned Node image digest}
     # Docker Desktop's socket uses group 0. Linux must use its actual dedicated socket GID.
@@ -55,7 +57,7 @@ services:
       SANDLANE_BROKER_SOCKET: /control/broker.sock
       SANDLANE_BROKER_STATE_DIR: /state
       SANDLANE_BROKER_SERVICE_TOKEN_FILE: /config/broker-token
-      # Harness id -> pinned CLI image, e.g. {"codex":"...@sha256:...","claude-code":"...@sha256:..."}
+      # Harness id -> pinned CLI image; built-ins: codex, claude-code, qwen-code and opencode.
       SANDLANE_BROKER_RUN_IMAGES: ${RUNTIME_CLI_IMAGES:?Set the harness to pinned CLI image JSON map}
       SANDLANE_BROKER_NETWORK_MODE: none
       SANDLANE_BROKER_MAX_CONCURRENT: 5
@@ -119,6 +121,7 @@ services:
       PUREFECT_SERVICE_SECRET_FILE: /secrets/service-secret
       PUREFECT_INSTRUCTION_PROFILE: ${PUREFECT_INSTRUCTION_PROFILE:-business}
       PUREFECT_CLIENT_MODULE: /opt/purefect-client/lib/purefect_client.js
+      SANDLANE_MCP_CONFIG_FILE: ${SANDLANE_MCP_CONFIG_FILE:-}
     volumes:
       - broker-control:/control:ro
       - host-config:/host-config:ro

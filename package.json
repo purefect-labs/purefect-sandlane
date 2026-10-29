@@ -10,7 +10,16 @@
     "url": "git+https://github.com/purefect-labs/purefect-sandlane.git"
   },
   "license": "Apache-2.0",
+  "homepage": "https://www.purefect.cn/en/opensource",
   "exports": {
+    "./plugins/mcp": {
+      "types": "./dist/plugins/mcp/provider.d.ts",
+      "import": "./dist/plugins/mcp/provider.js"
+    },
+    "./runtime/managed": {
+      "types": "./dist/runtime/managed.d.ts",
+      "import": "./dist/runtime/managed.js"
+    },
     "./runtime": {
       "types": "./dist/runtime/runtime.d.ts",
       "import": "./dist/runtime/runtime.js"
@@ -31,9 +40,17 @@
       "types": "./dist/spi/model-upstream.d.ts",
       "import": "./dist/spi/model-upstream.js"
     },
+    "./spi/run-credentials": {
+      "types": "./dist/spi/run-credentials.d.ts",
+      "import": "./dist/spi/run-credentials.js"
+    },
     "./spi/sandbox": {
       "types": "./dist/spi/sandbox.d.ts",
       "import": "./dist/spi/sandbox.js"
+    },
+    "./spi/status": {
+      "types": "./dist/spi/status.d.ts",
+      "import": "./dist/spi/status.js"
     },
     "./spi/tool-provider": {
       "types": "./dist/spi/tool-provider.d.ts",
@@ -51,22 +68,30 @@
   "files": [
     "dist",
     "contract",
+    "CHANGELOG.md",
     "LICENSE",
     "NOTICE",
     "docs"
   ],
   "scripts": {
+    "mcp:check": "npm run build && node --test test/mcp-upstreams.test.js test/mcp-sdk-template.test.js",
+    "demo": "npm run build && node scripts/demo.js",
+    "demo:chat": "npm run build && node scripts/demo-chat.js",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "format:runtime": "prettier --write \"src/{spi,core,common,runtime}/*.ts\" \"src/bin/worker.ts\" \"src/status/*.ts\" \"src/sandbox/docker/{docker-*,channel-*,lifecycle,contracts,client,server,broker-transport,broker-sandbox,run-network,relay-binding,managed-launch,session-processes,session-inputs,session-outputs}.ts\" \"src/harness/codex/{codex-adapter,codex-managed-config,local-process-transport}.ts\" \"src/harness/claude-code/*.ts\" \"src/gateway/model/{responses-request,upstream-transport,messages-request,messages-provider,model-server,web-access,file-mode}.ts\" \"src/gateway/tool/local-authority.ts\" \"src/plugins/purefect/{workspace-interaction,contract,control-plane,context,purefect-adapter,purefect-catalog,task-delegation,task-schedule,task-mail}.ts\" \"src/plugins/memory/context-provider.ts\" \"test/{architecture,docker-attach,broker-transport,harness-transport,sandbox-broker,managed-cli-*,broker-sandbox,execution-*,workspace-interaction,claude-code-driver,messages-gateway,web-access,status-panel,session-inputs,file-mode,runtime-composition}.test.js\" \"test/{session-outputs,output-files,task-delegation}.test.js\" \"fixtures/fake-claude-code.js\" \"scripts/docker-attach-validation.js\"",
-    "format:runtime:check": "prettier --check \"src/{spi,core,common,runtime}/*.ts\" \"src/bin/worker.ts\" \"src/status/*.ts\" \"src/sandbox/docker/{docker-*,channel-*,lifecycle,contracts,client,server,broker-transport,broker-sandbox,run-network,relay-binding,managed-launch,session-processes,session-inputs,session-outputs}.ts\" \"src/harness/codex/{codex-adapter,codex-managed-config,local-process-transport}.ts\" \"src/harness/claude-code/*.ts\" \"src/gateway/model/{responses-request,upstream-transport,messages-request,messages-provider,model-server,web-access,file-mode}.ts\" \"src/gateway/tool/local-authority.ts\" \"src/plugins/purefect/{workspace-interaction,contract,control-plane,context,purefect-adapter,purefect-catalog,task-delegation,task-schedule,task-mail}.ts\" \"src/plugins/memory/context-provider.ts\" \"test/{architecture,docker-attach,broker-transport,harness-transport,sandbox-broker,managed-cli-*,broker-sandbox,execution-*,workspace-interaction,claude-code-driver,messages-gateway,web-access,status-panel,session-inputs,file-mode,runtime-composition}.test.js\" \"test/{session-outputs,output-files,task-delegation}.test.js\" \"fixtures/fake-claude-code.js\" \"scripts/docker-attach-validation.js\"",
+    "format:runtime": "prettier --write \"src/{spi,core,common,runtime}/*.ts\" \"src/bin/worker.ts\" \"src/status/*.ts\" \"src/sandbox/docker/{docker-*,channel-*,lifecycle,contracts,client,server,broker-transport,broker-sandbox,run-network,relay-binding,managed-launch,session-processes,session-inputs,session-outputs}.ts\" \"src/harness/codex/{codex-adapter,codex-managed-config,local-process-transport}.ts\" \"src/harness/claude-code/*.ts\" \"src/gateway/model/{responses-request,upstream-transport,upstream-endpoint,local-authority,responses-provider,messages-request,messages-provider,model-server,web-access,file-mode}.ts\" \"src/gateway/tool/local-authority.ts\" \"src/plugins/purefect/{workspace-interaction,contract,control-plane,context,purefect-adapter,purefect-catalog,task-delegation,task-schedule,task-mail}.ts\" \"src/plugins/memory/context-provider.ts\" \"test/{architecture,docker-attach,broker-transport,harness-transport,sandbox-broker,managed-cli-*,broker-sandbox,execution-*,workspace-interaction,claude-code-driver,messages-gateway,web-access,status-panel,session-inputs,file-mode,runtime-composition}.test.js\" \"test/{session-outputs,output-files,task-delegation}.test.js\" \"fixtures/fake-claude-code.js\" \"scripts/docker-attach-validation.js\" \"src/bin/demo*.ts\" \"src/plugins/standalone/*.ts\" \"test/standalone-*.test.js\" \"scripts/{demo,relay-binding}.js\" \"scripts/package-validation.js\" \"fixtures/demo-cli.mjs\" \"scripts/model-compatibility*.js\" \"test/model-compatibility.test.js\" \"src/plugins/mcp/*.ts\" \"test/mcp-upstreams.test.js\" \"fixtures/mcp-upstream.mjs\" \"scripts/demo-chat.js\" \"scripts/demo-build.js\" \"test/demo-build.test.js\"",
+    "format:runtime:check": "prettier --check \"src/{spi,core,common,runtime}/*.ts\" \"src/bin/worker.ts\" \"src/status/*.ts\" \"src/sandbox/docker/{docker-*,channel-*,lifecycle,contracts,client,server,broker-transport,broker-sandbox,run-network,relay-binding,managed-launch,session-processes,session-inputs,session-outputs}.ts\" \"src/harness/codex/{codex-adapter,codex-managed-config,local-process-transport}.ts\" \"src/harness/claude-code/*.ts\" \"src/gateway/model/{responses-request,upstream-transport,upstream-endpoint,local-authority,responses-provider,messages-request,messages-provider,model-server,web-access,file-mode}.ts\" \"src/gateway/tool/local-authority.ts\" \"src/plugins/purefect/{workspace-interaction,contract,control-plane,context,purefect-adapter,purefect-catalog,task-delegation,task-schedule,task-mail}.ts\" \"src/plugins/memory/context-provider.ts\" \"test/{architecture,docker-attach,broker-transport,harness-transport,sandbox-broker,managed-cli-*,broker-sandbox,execution-*,workspace-interaction,claude-code-driver,messages-gateway,web-access,status-panel,session-inputs,file-mode,runtime-composition}.test.js\" \"test/{session-outputs,output-files,task-delegation}.test.js\" \"fixtures/fake-claude-code.js\" \"scripts/docker-attach-validation.js\" \"src/bin/demo*.ts\" \"src/plugins/standalone/*.ts\" \"test/standalone-*.test.js\" \"scripts/{demo,relay-binding}.js\" \"scripts/package-validation.js\" \"fixtures/demo-cli.mjs\" \"scripts/model-compatibility*.js\" \"test/model-compatibility.test.js\" \"src/plugins/mcp/*.ts\" \"test/mcp-upstreams.test.js\" \"fixtures/mcp-upstream.mjs\" \"scripts/demo-chat.js\" \"scripts/demo-build.js\" \"test/demo-build.test.js\"",
+    "format:harnesses": "prettier --write \"src/common/builtin-harness.ts\" \"src/harness/builtin-runtime.ts\" \"src/harness/{qwen-code,opencode,single-shot}/*.ts\" \"test/single-shot-harness.test.js\" \"deploy/harness-launch-shim.mjs\"",
+    "format:harnesses:check": "prettier --check \"src/common/builtin-harness.ts\" \"src/harness/builtin-runtime.ts\" \"src/harness/{qwen-code,opencode,single-shot}/*.ts\" \"test/single-shot-harness.test.js\" \"deploy/harness-launch-shim.mjs\"",
+    "check:harnesses": "node --check deploy/harness-launch-shim.mjs && npm run format:harnesses:check",
     "broker": "node dist/bin/broker.js",
     "runtime:purefect": "node dist/bin/worker.js",
     "runtime:execution": "node dist/bin/worker.js",
     "test": "npm run build && node --test test/*.test.js",
     "package:check": "npm run build && node scripts/package-validation.js",
     "preflight": "node scripts/preflight.js",
-    "check": "node --check scripts/preflight-lib.js && node --check scripts/preflight.js && node --check scripts/package-validation.js && npm run typecheck"
+    "check": "node --check scripts/demo-build.js && node --check scripts/demo-chat.js && node --check scripts/model-compatibility.js && node --check scripts/model-compatibility-lib.js && node --check scripts/relay-binding.js && node --check scripts/demo.js && node --check fixtures/demo-cli.mjs && node --check scripts/preflight-lib.js && node --check scripts/preflight.js && node --check scripts/package-validation.js && npm run typecheck",
+    "models:check": "npm run build && node scripts/model-compatibility.js"
   },
   "engines": {
     "node": ">=20"

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 import type { HarnessLaunch, HarnessLaunchConfig, HarnessLauncher } from "../../spi/harness.js";
+export { CODEX_FILE_FUNCTIONS, codexModelFunctions } from "../../common/builtin-harness.js";
 
 /** Host-owned per-Run configuration. These are scoped Gateway capabilities, NEVER provider keys,
  * user PATs or node service credentials. Gateway endpoints must be operator-pinned and implement
@@ -33,14 +34,6 @@ const TOOL_TIMEOUT_SEC = 70;
  * `features.unified_exec=false` has no effect there); older versions name the shell tool `shell`
  * or `shell_command` depending on the model family. The model gateway admits them for file-mode
  * Runs only. */
-export const CODEX_FILE_FUNCTIONS: readonly string[] = Object.freeze([
-  "exec_command",
-  "write_stdin",
-  "shell",
-  "shell_command",
-  "view_image"
-]);
-
 /** Per-Run Codex `-c` overrides and capability environment variables. The tool gateway is
  * registered as MCP server `toolServer`, so the model sees its tools as `mcp__<toolServer>`. */
 export function codexManagedConfig(config: CodexManagedConfig): HarnessLaunch {
@@ -139,10 +132,6 @@ export function codexManagedConfig(config: CodexManagedConfig): HarnessLaunch {
 /** Function names Codex shows the model: tool gateway tools (the client action included) as
  * `mcp__<server>.<tool>`, dots in a tool name becoming underscores. The model gateway admits
  * exactly these. */
-export function codexModelFunctions(toolServer: string, tools: readonly string[]): string[] {
-  return tools.map(tool => `mcp__${toolServer}.${tool.replaceAll(".", "_")}`);
-}
-
 const CODEX_HOME = "/home/runner/.codex";
 
 /** The Codex Driver's launch description for the sandbox: `codex [-c ...] app-server`. */

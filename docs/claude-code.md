@@ -78,7 +78,7 @@ SandLane 可以用 Anthropic Claude Code CLI（实测版本 2.1.301）代替 Cod
 ## 镜像
 
 ```bash
-docker build -f Dockerfile.cli-claude \
+docker build -f deploy/Dockerfile.cli-claude \
   --build-arg NODE_IMAGE=node@sha256:<digest> \
   --build-arg CLAUDE_CODE_VERSION=2.1.301 \
   -t <registry>/native-claude-code:2.1.301 .
@@ -88,4 +88,4 @@ docker build -f Dockerfile.cli-claude \
 确认是可执行的二进制而非占位脚本。只读根文件系统、uid 1000 下运行，只需 `/tmp` 与 `CLAUDE_CONFIG_DIR` 可写（Broker 均以 tmpfs 提供）。
 镜像同时预装 python3 与固定版本的文档库（pypdf、pdfplumber、openpyxl、pandas、python-pptx、python-docx、matplotlib），
 供带会话文件的 Run（文件模式）使用，构建时需要联网；详见 [配置参考](./configuration.md) 的“文件模式”与“镜像里的文档工具”。
-网关使用自签证书时，与 Codex 一样在其上构建 `Dockerfile.cli-ca`。
+网关使用自签证书时，与 Codex 一样在其上构建 `deploy/Dockerfile.cli-ca`。

@@ -27,7 +27,7 @@ Worker 进程内的轻量状态页，不依赖任何控制面或外部服务：�
 -e SANDLANE_STATUS_PORT=19445 -e SANDLANE_STATUS_BIND=0.0.0.0 -p 127.0.0.1:19445:19445
 ```
 
-`compose.runtime.yaml` 的 `execution` 服务已带同样的映射（只发布到 `127.0.0.1`），设置
+`deploy/compose.runtime.yaml` 的 `execution` 服务已带同样的映射（只发布到 `127.0.0.1`），设置
 `SANDLANE_STATUS_PORT=19445` 即启用。启动后日志有一条 `STATUS_PANEL_LISTENING`（地址、端口、是否带令牌）。
 
 访问：

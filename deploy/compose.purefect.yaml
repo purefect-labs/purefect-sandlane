@@ -1,0 +1,54 @@
+# Copyright © 2024-2026 杭州熵闪科技(Hangzhou Sunshine Technology Corporation). All rights reserved. https://www.purefect.cn
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Additive reference overlay for compose.runtime.yaml; preserve existing deployment volumes.
+services:
+  broker:
+    environment:
+      SANDLANE_BROKER_NETWORK_MODE: isolated
+      SANDLANE_BROKER_RELAY_BINDING: ${SANDLANE_BROKER_RELAY_BINDING:-}
+      SANDLANE_BROKER_MANAGED_GATEWAYS: ${SANDLANE_BROKER_MANAGED_GATEWAYS:?Set HTTPS modelBaseUrl and mcpUrl}
+  execution:
+    network_mode: !reset null
+    ports: !reset []
+    networks:
+      managed:
+        ipv4_address: ${SANDLANE_WORKER_IP:?Set a fixed Worker IP within SANDLANE_MANAGED_SUBNET}
+  relay:
+    image: ${SANDLANE_RELAY_IMAGE:?Set a pinned Relay image}
+    pull_policy: never
+    user: "1000:1000"
+    entrypoint: [/usr/local/bin/node]
+    command: [/app/bin/relay.js]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: 128m
+    ipc: private
+    sysctls:
+      net.ipv4.ip_forward: "0"
+      net.ipv6.conf.all.forwarding: "0"
+    environment:
+      SANDLANE_RELAY_ROUTES: ${SANDLANE_RELAY_ROUTES:?Set fixed IP routes}
+    labels:
+      cn.purefect.sandlane.relay.node: local-docker-1
+      cn.purefect.sandlane.relay.policy: ${SANDLANE_RELAY_POLICY_DIGEST:?Set SHA-256 of the exact routes JSON}
+    networks: [managed]
+    logging: {driver: none}
+networks:
+  managed:
+    ipam:
+      config:
+        - subnet: ${SANDLANE_MANAGED_SUBNET:?Set an unused private subnet}

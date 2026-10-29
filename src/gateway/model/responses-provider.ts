@@ -19,6 +19,7 @@ import {
   type ManagedResponsesRequest
 } from "./responses-request.js";
 import { readResponsesEvents, type ResponsesEvent } from "./responses-stream.js";
+import { upstreamEndpoint } from "./upstream-endpoint.js";
 import type { UpstreamSend } from "./upstream-transport.js";
 import type {
   ModelUpstream,
@@ -42,17 +43,7 @@ export class ResponsesProvider implements ModelUpstream {
     origin: string,
     private readonly send: UpstreamSend = fetch
   ) {
-    const url = new URL(origin);
-    if (
-      url.protocol !== "https:" ||
-      url.username ||
-      url.password ||
-      url.search ||
-      url.hash ||
-      !["/", "/v1", "/v1/"].includes(url.pathname)
-    )
-      throw Error("MODEL_PROVIDER_CONFIGURATION");
-    this.endpoint = new URL("/v1/responses", url.origin).href;
+    this.endpoint = upstreamEndpoint(origin, "responses");
   }
 
   /** Open a pooled connection to the provider ahead of the first call; sends no credentials. */

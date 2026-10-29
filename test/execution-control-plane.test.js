@@ -297,7 +297,7 @@ test("lease and sync parsing enforce the contract shape", () => {
       }),
     r => (r.run.harness = "claude-code"),
     r => (r.credentials.model_service.wire_api = "anthropic-messages"),
-    r => (r.run.harness = "opencode"),
+    r => (r.run.harness = "unknown-cli"),
     r => (r.run.harness = 7),
     r => (r.credentials.model_service.reasoning_effort = "extreme"),
     r => (r.run.execution_profile = "inline"),
