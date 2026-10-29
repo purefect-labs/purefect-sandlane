@@ -12,13 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Native CLI only. Driver, Broker and Worker code remain outside this image.
+# Codex is Apache-2.0 software distributed by OpenAI. This image installs an exact release;
+# Driver, Broker and Worker code remain outside this image.
 ARG NODE_IMAGE=node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6
 FROM ${NODE_IMAGE}
 ARG CODEX_VERSION
 COPY LICENSE NOTICE /usr/share/doc/purefect-sandlane/
+COPY LICENSE /usr/share/doc/codex/LICENSE
+COPY deploy/licenses/codex-NOTICE /usr/share/doc/codex/NOTICE
 RUN node -e 'if (!/^\d+\.\d+\.\d+$/.test(process.argv[1])) process.exit(1)' "$CODEX_VERSION" \
-    && npm install --global "@openai/codex@$CODEX_VERSION" \
+    && npm install --global --ignore-scripts "@openai/codex@$CODEX_VERSION" \
+    && codex --version | grep -qF "$CODEX_VERSION" \
     && npm cache clean --force
 # Document tools for conversation files (file mode): python3 with pinned libraries, installed at
 # build time into the system site-packages. The sandbox has no network (nothing can be installed

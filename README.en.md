@@ -18,7 +18,7 @@ Model providers and Agent CLIs are configured separately; SandLane is not limite
 
 Model extensions are not limited to these providers: Kimi (Moonshot AI), Google Gemini, and others are also potential integration targets. SandLane already implements a trusted Worker-side `ModelUpstreamFactory` extension point. Services matching the existing protocols can be configured directly; different native protocols or authentication schemes require an upstream adapter that maps requests, streaming responses, tool calls, and usage to the existing gateway contract. Kimi and Gemini have not been verified, and dedicated protocol adapters are not bundled. Chat Completions compatibility alone does not make a service directly usable with the existing Drivers.
 
-Agent CLIs are extensible too. Codex, Claude Code, Qwen Code, and OpenCode are built in. The latter two provide Apache-2.0/MIT open-source CLI paths, use the Responses gateway, and initially expose only Run-authorized MCP tools. Another CLI still requires an explicit `HarnessDriver`, launch configuration, pinned image, and compatibility tests; changing a tool name is not enough. See [Qwen Code and OpenCode](./docs/qwen-code-and-opencode.md) and the [standalone integration guide](./docs/standalone.md).
+Agent CLIs are extensible too. Codex, Claude Code, Qwen Code, and OpenCode are built in. The project publishes Apache-2.0 Codex and Qwen Code images and an MIT-licensed OpenCode image; Qwen Code and OpenCode use the Responses gateway and initially expose only Run-authorized MCP tools. Another CLI still requires an explicit `HarnessDriver`, launch configuration, pinned image, and compatibility tests; changing a tool name is not enough. See [Qwen Code and OpenCode](./docs/qwen-code-and-opencode.md) and the [standalone integration guide](./docs/standalone.md).
 
 [![CI](https://github.com/purefect-labs/purefect-sandlane/actions/workflows/ci.yml/badge.svg)](https://github.com/purefect-labs/purefect-sandlane/actions/workflows/ci.yml)
 
@@ -191,4 +191,4 @@ Report issues and suggest features through [GitHub Issues](https://github.com/pu
 
 Purefect SandLane is licensed under the [Apache License 2.0](./LICENSE). Additional attribution and notices are available in [NOTICE](./NOTICE).
 
-SandLane only launches third-party Agent CLIs installed by the deployer. Those CLIs, model providers, and connected services remain subject to their own licenses and terms. See [Claude Code support](./docs/claude-code.md) for considerations relevant to multi-tenant use.
+Third-party Agent CLIs in public images or installed by the deployer, model providers, and connected services remain subject to their own licenses and terms. See [Claude Code support](./docs/claude-code.md) for considerations relevant to multi-tenant use.
