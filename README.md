@@ -68,8 +68,13 @@ Demo 使用内存控制面和协议 fixture，实际经过 Docker、Broker、Rel
 
 - `ghcr.io/purefect-labs/purefect-sandlane-runtime`
 - `ghcr.io/purefect-labs/purefect-sandlane-relay`
+- `ghcr.io/purefect-labs/purefect-sandlane-codex`
 - `ghcr.io/purefect-labs/purefect-sandlane-qwen-code`
 - `ghcr.io/purefect-labs/purefect-sandlane-opencode`
+
+Codex、Qwen Code 和 OpenCode 镜像按各自开源许可证公开发布；许可证与第三方声明见
+[NOTICE](./NOTICE)。Claude Code 的分发条款不同，本项目只提供构建文件，不公开发布其预构建镜像；
+部署者须确认适用条款后自行构建并固定 digest。具体版本和拉取方式见[安装与启动](./docs/installation.md#2-获取和构建)。
 
 这些入口不会自动读取 `.env.local`。请使用 `node --env-file=.env.local ...`、systemd `EnvironmentFile` 或容器平台 Secret 显式注入配置。当前部署要求见[安装与启动](./docs/installation.md)和[配置参考](./docs/configuration.md)。
 

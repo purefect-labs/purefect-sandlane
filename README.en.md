@@ -49,8 +49,15 @@ Version tags publish multi-architecture images through GitHub Actions:
 
 - `ghcr.io/purefect-labs/purefect-sandlane-runtime`
 - `ghcr.io/purefect-labs/purefect-sandlane-relay`
+- `ghcr.io/purefect-labs/purefect-sandlane-codex`
 - `ghcr.io/purefect-labs/purefect-sandlane-qwen-code`
 - `ghcr.io/purefect-labs/purefect-sandlane-opencode`
+
+Codex, Qwen Code, and OpenCode images are published under their respective open-source licenses;
+see [NOTICE](./NOTICE) for attribution. Claude Code has different distribution terms, so this project
+provides its build file but does not publish a prebuilt image. Deployers must review the applicable
+terms, build it themselves, and pin the resulting digest. See [Installation and startup](./docs/installation.md#2-获取和构建)
+for image versions and pull instructions.
 
 These entry points do not load `.env.local` automatically. Inject configuration explicitly with `node --env-file=.env.local ...`, a systemd `EnvironmentFile`, or container-platform secrets. See [Installation and startup](./docs/installation.md) and [Configuration reference](./docs/configuration.md) for the current deployment requirements.
 

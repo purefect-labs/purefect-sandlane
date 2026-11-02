@@ -24,12 +24,57 @@ Context 注入规则、状态面板、memory 和 admission 配置保留。协议
 ## managed Compose 参考部署
 
 历史 `deploy/compose.runtime.yaml` 是基础清单，单独使用不能满足当前 Worker 要求。
-新增 `deploy/compose.purefect.yaml` 叠加 isolated 网络、固定 IP Relay 和 Broker binding，
-移除 Worker 网关的宿主端口发布。要求支持 `!reset` 的 Compose 2.24+。
+`deploy/compose.purefect.yaml` 叠加 isolated 网络、固定 Worker IP、Relay 服务和 Broker binding，
+节点 overlay 再固定 Relay IP，并移除 Worker 网关的宿主端口发布。要求支持 `!reset` 的 Compose 2.24+。
 
-部署前仍须准备基础清单要求的 runtime/CLI 镜像、PurefectClient、Engine CA、
+部署前仍须准备基础清单要求的 runtime/CLI 镜像、PurefectClient、私有 Engine CA（如使用）、
 网关 TLS 证书、SERVICE secret，按 [安装说明](../installation.md) 放入相应卷。
-以下命令用于新测试部署；已有节点先 drain，再迁移，不能直接重建其正在使用的 Relay。
+已有节点先 drain，再迁移，不能直接重建其正在使用的 Relay。
+
+服务器约定一个私有配置目录：中立默认值是 `/etc/sandlane`；为兼容既有 Purefect 节点，工具也会
+自动识别 `/etc/purefect/sandlane`。目录包含：
+
+```text
+runtime.env          非敏感运行参数和镜像 digest
+relay.env            Relay routes 与策略摘要；缺少时由 init 从 runtime.env 生成
+binding.env          自动生成的不可变 Relay binding
+compose.server.yaml  可选的节点挂载和固定 IP 覆盖清单
+```
+
+新节点从不含 Secret 的模板开始，随后只在节点私有目录填写实际值：
+
+```bash
+sudo install -d -m 0700 /etc/sandlane
+sudo install -m 0600 deploy/purefect-runtime.env.example /etc/sandlane/runtime.env
+sudo install -m 0600 deploy/compose.server.example.yaml /etc/sandlane/compose.server.yaml
+```
+
+`runtime.env` 的占位值必须全部替换。`SANDLANE_WORKER_IP` 与 `SANDLANE_RELAY_IP` 必须位于 managed
+subnet 且互不相同；节点 overlay 显式固定 Relay IP，避免 Relay 先启动时占用 Worker 的地址。
+
+真实 Secret、TLS 私钥可以由 `compose.server.yaml` 从节点受限路径挂载，但不得写入这些普通参数、
+仓库或命令行。准备好镜像、证书、Secret、PurefectClient 和 `runtime.env` 后，日常入口只有：
+
+```bash
+npm ci
+npm run build
+npm run server -- up
+npm run server -- doctor
+```
+
+`up` 依次校验 Compose、执行 init、启动 Relay、用完整容器 ID 运行 confinement 校验、原子更新
+`binding.env`，最后启动 Broker 和 Worker，并执行只读 doctor。默认 Compose project 保留为
+`purefect-ai-runtime`，因此不会创建第二套命名卷。配置目录不在默认位置时显式传入：
+
+```bash
+npm run server -- up --config-dir /absolute/private/config
+```
+
+脚本只管理本机 SandLane 容器，不修改 Purefect Engine、Nginx、Connector、元数据或 SERVICE 主体。
+其他控制面可以用重复的 `--compose-file` 替换默认 Compose 组合；这里的 Purefect overlay 只是仓库
+内置参考集成，不是 SandLane runtime API 的依赖。
+
+以下展开命令保留用于审计和故障恢复，正常部署不需要逐条执行：
 
 1. 在私有环境文件设置基础清单变量，以及 `SANDLANE_RELAY_IMAGE`（digest）、
    `SANDLANE_MANAGED_SUBNET`、`SANDLANE_WORKER_IP`，保证子网无冲突。
@@ -62,7 +107,8 @@ docker compose --env-file /private/config/runtime.env --env-file /private/config
 Relay 重建后必须重新核对身份，并先让旧绑定完成旧 Run 网络清理。以上文件不含 Provider key，
 仍应放在部署专用私有目录，不能提交带本机拓扑的配置。
 
-这是平台参考部署清单，不是为现有部署自动执行迁移的脚本。完整、自动清理的无凭据体验使用
+`sandlane-server` 不生成长期 Secret、私有 CA 或平台身份，也不替正在运行的节点执行 drain；这些操作
+跨越信任或业务生命周期边界，必须由部署者显式完成。完整、自动清理的无凭据体验仍使用
 [独立 Demo](../demo.md)。
 
 ## 平台回归清单
@@ -76,16 +122,16 @@ Relay 重建后必须重新核对身份，并先让旧绑定完成旧 Run 网络
 
 ### 本次实现验收（2026-10-28）
 
-| 范围 | 结果 |
-| --- | --- |
-| SandLane 单元测试 | 477 项通过，0 失败、0 跳过；包含文件、审批、页面动作、委派和生命周期测试 |
-| Engine 租约 MySQL 集成测试 | 隔离源码构建运行 39 项，0 失败、0 错误、0 跳过；未覆盖运行中 Engine 的构建产物 |
-| v1 schema | 两端逐字节一致，本次未修改协议 |
-| 候选 Worker + 现有 Engine | 真实 Codex、Claude Code 均完成提交、领取、MCP 文档工具调用、事件回传和成功结算 |
-| 运行中取消 | 真实 Codex 取消并结算；Claude Code 的运行中取消尚未单独实测 |
-| 执行身份权限边界 | 真实工具调用受限 AI 接口返回 `ai_run_token_forbidden`，未放宽授权 |
-| 独立 Docker fixture | 成功、取消、租约丢失均通过，使用实际 TLS 模型/MCP 网关；不代表真实 Provider 验收 |
-| 公开分发和部署配置 | 实际 tarball 的 ESM/TypeScript 消费者通过；Purefect Compose 合并拓扑通过配置校验 |
+| 范围                       | 结果                                                                             |
+| -------------------------- | -------------------------------------------------------------------------------- |
+| SandLane 单元测试          | 477 项通过，0 失败、0 跳过；包含文件、审批、页面动作、委派和生命周期测试         |
+| Engine 租约 MySQL 集成测试 | 隔离源码构建运行 39 项，0 失败、0 错误、0 跳过；未覆盖运行中 Engine 的构建产物   |
+| v1 schema                  | 两端逐字节一致，本次未修改协议                                                   |
+| 候选 Worker + 现有 Engine  | 真实 Codex、Claude Code 均完成提交、领取、MCP 文档工具调用、事件回传和成功结算   |
+| 运行中取消                 | 真实 Codex 取消并结算；Claude Code 的运行中取消尚未单独实测                      |
+| 执行身份权限边界           | 真实工具调用受限 AI 接口返回 `ai_run_token_forbidden`，未放宽授权                |
+| 独立 Docker fixture        | 成功、取消、租约丢失均通过，使用实际 TLS 模型/MCP 网关；不代表真实 Provider 验收 |
+| 公开分发和部署配置         | 实际 tarball 的 ESM/TypeScript 消费者通过；Purefect Compose 合并拓扑通过配置校验 |
 
 以上平台冒烟使用候选 Worker 运行当前源码，未修改 Engine、Broker 或 Relay 配置。
 浏览器交互、文件输入/输出、审批、任务委派、成员指导和 SQLite memory 的完整平台端到端验收
