@@ -3,18 +3,20 @@
 本目录收纳镜像构建和Compose清单。以下命令均在**仓库根目录**执行。
 首次体验直接运行 `npm run demo` 或按[交互式 Demo](../docs/demo.md)运行 `npm run demo:chat`，无需手动组合清单。
 
-| 文件 | 用途 |
-| --- | --- |
-| `Dockerfile.runtime` | Worker与Broker镜像 |
-| `Dockerfile.relay` | 隔离网络Relay镜像 |
-| `Dockerfile.cli` | 固定版本Codex CLI镜像 |
-| `Dockerfile.cli-claude` | 固定版本Claude Code镜像 |
-| `Dockerfile.cli-qwen` | 固定版本Qwen Code开源CLI镜像 |
-| `Dockerfile.cli-opencode` | 固定版本OpenCode开源CLI镜像 |
-| `Dockerfile.cli-ca` | 在CLI镜像中加入网关CA |
-| `compose.runtime.yaml` | Purefect部署基础清单 |
-| `compose.purefect.yaml` | managed网络与Relay参考覆盖清单 |
-| `compose.demo.yaml` | 独立Demo拓扑，由脚本生成身份、证书和覆盖配置 |
+| 文件                           | 用途                                         |
+| ------------------------------ | -------------------------------------------- |
+| `Dockerfile.runtime`           | Worker与Broker镜像                           |
+| `Dockerfile.relay`             | 隔离网络Relay镜像                            |
+| `Dockerfile.cli`               | 固定版本Codex CLI镜像                        |
+| `Dockerfile.cli-claude`        | 固定版本Claude Code镜像                      |
+| `Dockerfile.cli-qwen`          | 固定版本Qwen Code开源CLI镜像                 |
+| `Dockerfile.cli-opencode`      | 固定版本OpenCode开源CLI镜像                  |
+| `Dockerfile.cli-ca`            | 在CLI镜像中加入网关CA                        |
+| `compose.runtime.yaml`         | Purefect部署基础清单                         |
+| `compose.purefect.yaml`        | managed网络与Relay参考覆盖清单               |
+| `purefect-runtime.env.example` | Purefect节点非敏感参数模板                   |
+| `compose.server.example.yaml`  | 节点Secret挂载和Relay固定IP模板              |
+| `compose.demo.yaml`            | 独立Demo拓扑，由脚本生成身份、证书和覆盖配置 |
 
 ```bash
 npm run build
@@ -37,6 +39,8 @@ docker compose --env-file /absolute/path/runtime.env \
 ```
 
 必须先填写参考集成要求的环境变量。此命令仅检查配置，不启动或修改现有部署。
+配置准备完成后，推荐使用 `npm run server -- up` 和 `npm run server -- doctor`，由统一入口按安全顺序
+处理 init、Relay binding、Broker 与 Worker；展开的 Compose 命令仍保留在参考集成中用于审计和恢复。
 Compose相对宿主路径按第一个清单所在的`deploy/`解析；Secret、客户端目录和自定义overlay挂载推荐使用绝对路径。
 基础清单的`build.context: ..`指向仓库根目录，不需要另外指定`--project-directory`。
 项目名和既有命名卷保持原定义；文件移动不会替你迁移或重启现有节点。

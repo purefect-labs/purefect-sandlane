@@ -6,8 +6,9 @@
 
 # 安装与启动
 
-当前 SandLane 由 Worker、Linux 节点 Broker，以及隔离网络模式下的 Relay 组成。仓库没有一条命令
-自动部署整套生产拓扑；部署者需要提供 CLI 镜像、TLS 证书、Secret 和所选控制面配置。
+当前 SandLane 由 Worker、Linux 节点 Broker，以及隔离网络模式下的 Relay 组成。仓库提供
+`npm run server -- <command>` 封装已准备节点上的 Compose 生命周期；部署者仍需提供 CLI 镜像、
+TLS 证书、Secret 和所选控制面配置，工具不会替控制面创建身份或修改远端系统。
 
 首次体验请用[独立 Demo](./demo.md)：`npm ci && npm run demo`，不需要 Purefect 或模型凭据。
 第三方接入见[公共 API](./standalone.md)。以下环境模板和 Worker 启动步骤针对
@@ -84,9 +85,10 @@ node --env-file=.env.local dist/bin/worker.js
 
 ## 4. 启动顺序
 
-Compose 部署须同时使用 `deploy/compose.runtime.yaml` 和 `deploy/compose.purefect.yaml`，按照
-[参考部署](./integrations/purefect.md#managed-compose-参考部署)先启动 Relay、核验并生成 binding，
-再启动 Broker 和 Worker。基础清单不能单独满足 managed 网络要求。
+内置 Compose 部署须同时使用 `deploy/compose.runtime.yaml` 和 `deploy/compose.purefect.yaml`。
+准备配置目录后运行 `npm run server -- up`；它会先启动 Relay、核验并生成 binding，再启动 Broker
+和 Worker。具体目录、短命令和展开后的恢复命令见
+[参考部署](./integrations/purefect.md#managed-compose-参考部署)。基础清单不能单独满足 managed 网络要求。
 
 ### Relay（仅 isolated 网络）
 
@@ -121,6 +123,10 @@ node --env-file=.env.local dist/bin/worker.js
 别名。npm scripts 本身不会加载
 `.env.local`。Worker 启动时会验证 Broker node id、managed gateway 能力、TLS 文件权限、PurefectClient
 模块与 API 文档目录，然后监听模型和 MCP 网关。成功日志包含 `RUNTIME_STARTED`。
+
+Linux 节点使用内置 Purefect Compose 时，不从完整 `.env.example` 手工筛选变量；直接采用
+`deploy/purefect-runtime.env.example` 与 `deploy/compose.server.example.yaml`，目录布局和命令见
+[Purefect 参考集成](./integrations/purefect.md#managed-compose-参考部署)。
 
 ## 5. 安装验收
 

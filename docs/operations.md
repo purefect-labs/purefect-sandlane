@@ -6,6 +6,25 @@
 
 # 日常运维
 
+## 统一运维入口
+
+使用仓库内置 managed Compose 时，从仓库根目录执行：
+
+```bash
+npm run server -- status
+npm run server -- doctor
+npm run server -- logs
+npm run server -- logs --follow
+```
+
+工具优先读取 `/etc/sandlane`，并兼容既有 `/etc/purefect/sandlane`；也可通过
+`--config-dir` 或 `SANDLANE_SERVER_CONFIG_DIR` 显式选择。`doctor` 不修改容器，检查 Compose、三个
+长期服务、Broker health、Relay 实际身份与已保存 binding，以及已启用的本机状态面板。
+
+`npm run server -- up` 会刷新 Relay binding 并可能在配置发生变化时重建服务。更新或变更 Relay、
+镜像、网络、证书前仍须先从控制面停止新任务并 drain；统一入口不把业务生命周期判断隐藏在自动化里。
+下文的底层检查和停止顺序仍是故障恢复依据。
+
 ## 进程与就绪状态
 
 运行拓扑包含 Worker、Linux 节点 Broker，以及 `isolated` 网络模式下的 Relay。当前 Worker 组合要求
