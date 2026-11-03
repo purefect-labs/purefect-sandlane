@@ -98,6 +98,8 @@ services:
       SANDLANE_RUNTIME_ID: ${SANDLANE_RUNTIME_ID:?Set the runtime id}
       SANDLANE_LANES: ${SANDLANE_LANES:-interactive}
       SANDLANE_CONCURRENCY: ${SANDLANE_CONCURRENCY:-1}
+      # Opt-in, bounded Codex rollout cache; see docs/native-sessions.md before enabling.
+      SANDLANE_NATIVE_SESSIONS: ${SANDLANE_NATIVE_SESSIONS:-false}
       SANDLANE_ADMISSION_MEMORY_MIB: ${SANDLANE_ADMISSION_MEMORY_MIB:-0}
       # Default: every tool (the former metadata.* tools no longer exist and failed startup).
       SANDLANE_ENABLED_TOOLS: ${SANDLANE_ENABLED_TOOLS:-purefect_call,list_api_docs,read_api_doc,read_skill,workspace_action,propose_task,report_task}

@@ -24,6 +24,7 @@ SandLane 是面向多租户、多用户控制面的自托管 Agent CLI 执行平
 - [工具与页面动作](./tools-and-page-actions.md)
 - [联网访问](./web-access.md)
 - [记忆接入](./memory.md)
+- [Codex 原生会话复用](./native-sessions.md)（实验性，默认关闭）
 
 ## 运行与开发
 

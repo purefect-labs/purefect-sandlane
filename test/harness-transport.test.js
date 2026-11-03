@@ -254,7 +254,7 @@ test("protocol driver accepts an external byte transport without touching host w
     streamingText: true,
     interactiveInput: false,
     approvalBridge: false,
-    nativeResume: false,
+    nativeResume: true,
     modelWire: "responses",
     sessionPolicy: "ephemeral"
   });

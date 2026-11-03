@@ -18,6 +18,43 @@ import assert from "node:assert/strict";
 import { BrokerSandboxLauncher } from "../dist/sandbox/docker/broker-sandbox.js";
 
 const capability = c => c.repeat(43);
+
+test("native restore is optional on old Brokers, fences import errors and isolates membership", async () => {
+  const driver = () => ({ dispose: async () => {}, capabilities: {} });
+  const old = broker();
+  const oldSession = await new BrokerSandboxLauncher(old, "node-1", { codex: driver }).open(
+    request({ nativeSession: true, tenantAccessId: "member-2" }),
+    AbortSignal.timeout(1000)
+  );
+  assert.equal(oldSession.nativeSession, undefined);
+  assert.equal(old.calls[0].spec.session.memberId, "member-2");
+  const fake = broker({
+    status: async () => ({
+      nodeId: "node-1",
+      ready: true,
+      managedLaunch: true,
+      harnesses: ["codex"],
+      nativeState: "codex-rollout-v1"
+    }),
+    putNativeState: async () => {
+      throw Error("reply lost");
+    }
+  });
+  await assert.rejects(
+    new BrokerSandboxLauncher(fake, "node-1", { codex: driver }).open(
+      request({ nativeSession: true, nativeState: {} }),
+      AbortSignal.timeout(1000)
+    ),
+    /NATIVE_STATE_UNAVAILABLE/
+  );
+  assert.equal(fake.calls.at(-1).op, "terminate");
+  fake.putNativeState = async () => false;
+  const cold = await new BrokerSandboxLauncher(fake, "node-1", { codex: driver }).open(
+    request({ nativeSession: true, nativeState: {} }),
+    AbortSignal.timeout(1000)
+  );
+  assert.equal(cold.nativeSession.resume, undefined);
+});
 function request(changes = {}) {
   const now = Date.now();
   return {

@@ -17,10 +17,15 @@
 import type { OutputRejection } from "../common/output-files.js";
 import type { PromptFormat } from "../common/turn-envelope.js";
 import type { HarnessDriver } from "./harness.js";
+import type { NativeSnapshot, NativeThread } from "../common/native-session.js";
 
 /** What the sandbox receives: Run coordinates, the frozen prompt and scoped capabilities.
  * Raw credentials (agent token, model key) never appear here. */
 export interface SandboxRequest {
+  /** Host-held opaque state. Unsupported providers leave nativeSession absent in their reply. */
+  readonly nativeState?: NativeSnapshot;
+  readonly nativeSession?: boolean;
+  readonly tenantAccessId?: string;
   readonly allocationId: string;
   /** Harness ID from the lease: selects the Driver and the CLI image. */
   readonly harness: string;
@@ -70,6 +75,10 @@ export interface SandboxOutputFile {
 }
 
 export interface SandboxSession {
+  readonly nativeSession?: {
+    readonly resume?: NativeThread;
+    capture(thread: NativeThread, signal: AbortSignal): Promise<NativeSnapshot>;
+  };
   /** Driver bound to the session's channel; disposing it stops the CLI. */
   readonly driver: HarnessDriver;
   /** Read the generated files after the CLI's turn and before close(); absent when the provider

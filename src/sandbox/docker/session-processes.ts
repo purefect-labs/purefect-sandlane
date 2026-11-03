@@ -36,7 +36,8 @@ export class SessionProcesses {
     containerId: string,
     archive: readonly Buffer[],
     expiresAt: number,
-    signal: AbortSignal
+    signal: AbortSignal,
+    command: readonly string[] = EXTRACT_COMMAND
   ): Promise<void> {
     if (!this.engine.startExec)
       throw new BrokerError("INPUTS_UNSUPPORTED", 409, "Engine cannot run session processes");
@@ -48,7 +49,7 @@ export class SessionProcesses {
         Tty: false,
         User: "1000:1000",
         WorkingDir: "/workspace",
-        Cmd: [...EXTRACT_COMMAND],
+        Cmd: [...command],
         Env: []
       })
     );

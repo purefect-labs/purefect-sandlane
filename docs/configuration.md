@@ -203,6 +203,9 @@ TCP 目的地，不读取 Run capability、Provider key 或 Purefect token。
 
 ## 状态面板与记忆
 
+`SANDLANE_NATIVE_SESSIONS=true` 可开启实验性的 Codex 0.154.0 原生会话复用，默认关闭。
+需同时更新 Worker 与 Broker；支持范围、缓存限制及降级规则见[原生会话复用](./native-sessions.md)。
+
 状态面板默认关闭；设置 `SANDLANE_STATUS_PORT` 后启用。`SANDLANE_STATUS_BIND` 默认
 `127.0.0.1`，`SANDLANE_STATUS_RUN_IDS` 默认 `hash`，`SANDLANE_STATUS_RECENT_RUNS` 默认 50。
 非 IP Host header 需列入 `SANDLANE_STATUS_HOSTS`。公网或共享网络部署必须设置

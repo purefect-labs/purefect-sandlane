@@ -49,6 +49,12 @@ jobs:
       - name: Check runtime formatting
         run: npm run format:runtime:check
 
+      - name: Check native session validation tooling
+        run: |
+          node --check scripts/native-session-validation.js
+          node --check scripts/fixtures/native-session-gateways.mjs
+          npm run format:native:check
+
       - name: Run unit tests
         run: npm test
 

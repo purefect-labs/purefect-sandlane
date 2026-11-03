@@ -70,6 +70,7 @@ const PROPOSE_TIMEOUT_MS = 10_000;
  * installed by the operator, never selected by a lease or model. No automatic retry here: the
  * lane decides what is safe to resend. Errors never contain bodies, URLs or credentials. */
 export class PapiControlPlane implements ControlPlane {
+  readonly serialAppendOnlyConversations = true;
   /** Page actions in the user's browser, relayed by the Engine. */
   readonly clientActions = WORKSPACE_ACTIONS;
   /** In-conversation delegation: propose_task for conversation Runs, report_task for task Runs

@@ -393,6 +393,10 @@ export interface ControlTool {
 }
 
 export interface ControlPlane {
+  /** Opt-in contract for native history: conversation messages are append-only, run_no is
+   * monotonic, and Runs of a conversation execute serially. Editing requires cache reset or
+   * disabling this capability before the new semantics are exposed. */
+  readonly serialAppendOnlyConversations?: boolean;
   /** Long poll. Returns raw leases; each is validated individually through readLease(). */
   claim(request: ClaimRequest, signal: AbortSignal): Promise<readonly unknown[]>;
   /** Validate one raw lease. Undefined when not even a settleable proof can be read. */

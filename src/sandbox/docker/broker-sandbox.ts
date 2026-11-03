@@ -29,7 +29,14 @@ import { parseRunAuthorization } from "./managed-launch.js";
 
 type Broker = Pick<
   BrokerClient,
-  "status" | "allocateManaged" | "renew" | "terminate" | "putInputs" | "getOutputs"
+  | "status"
+  | "allocateManaged"
+  | "renew"
+  | "terminate"
+  | "putInputs"
+  | "getOutputs"
+  | "putNativeState"
+  | "getNativeState"
 >;
 
 const RENEW_STEP_MS = 5_000;
@@ -86,7 +93,10 @@ export class BrokerSandboxLauncher implements SandboxProvider {
       prompt: request.prompt,
       ...(request.promptFormat !== "text" ? { promptFormat: request.promptFormat } : {}),
       // Broker session reuse is keyed by conversation and member.
-      session: { taskId: request.conversationId, memberId: request.userId }
+      session: {
+        taskId: request.conversationId,
+        memberId: request.tenantAccessId ?? request.userId
+      }
     });
     const authorization = parseRunAuthorization(
       {
@@ -124,6 +134,21 @@ export class BrokerSandboxLauncher implements SandboxProvider {
       // A lost reply may still have created the allocation: terminate before reporting failure.
       await this.broker.terminate(ref, AbortSignal.timeout(10_000)).catch(() => {});
       throw new Error("SANDBOX_UNAVAILABLE");
+    }
+    const nativeEnabled =
+      request.nativeSession === true &&
+      request.harness === "codex" &&
+      !request.inputs?.length &&
+      status.nativeState === "codex-rollout-v1";
+    let restored = false;
+    if (nativeEnabled && request.nativeState) {
+      try {
+        restored = await this.broker.putNativeState(ref, request.nativeState, signal);
+      } catch {
+        // A lost import reply may have written state. Never start a fresh thread over it.
+        await this.broker.terminate(ref, AbortSignal.timeout(10_000)).catch(() => {});
+        throw new Error("NATIVE_STATE_UNAVAILABLE");
+      }
     }
     // Input files go in before the channel (and so the CLI) starts; without them the Run's
     // instructions would point at files that are not there.
@@ -190,6 +215,22 @@ export class BrokerSandboxLauncher implements SandboxProvider {
     let renewing: Promise<void> | undefined;
     return {
       driver,
+      ...(nativeEnabled
+        ? ({
+            nativeSession: {
+              ...(restored
+                ? {
+                    resume: {
+                      threadId: request.nativeState!.threadId,
+                      path: request.nativeState!.path
+                    }
+                  }
+                : {}),
+              capture: (thread, captureSignal) =>
+                this.broker.getNativeState(ref, thread, captureSignal)
+            }
+          } satisfies Pick<SandboxSession, "nativeSession">)
+        : {}),
       // Only a file-mode session (inputs written) has an outputs directory worth reading.
       ...(request.inputs?.length
         ? {

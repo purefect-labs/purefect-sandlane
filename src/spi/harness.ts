@@ -18,10 +18,19 @@
 import type { PromptFormat } from "../common/turn-envelope.js";
 import type { ReasoningEffort } from "./control-plane.js";
 import type { ModelWire } from "./model-upstream.js";
+import type { NativeThread } from "../common/native-session.js";
 
 /** One turn's input. Every tool, including the control plane's client action, reaches the CLI
  * through the tool gateway (MCP), so the Driver needs no tool bridge. */
 export interface RunInput {
+  /** Opt-in, host-owned native persistence. Absent retains the ephemeral contract. Capture runs
+   * after a successful turn and before transport stop; failure only discards the cache. */
+  nativeSession?: {
+    readonly resume?: NativeThread;
+    readonly prompt: string;
+    readonly promptFormat: PromptFormat;
+    capture(thread: NativeThread): Promise<void>;
+  };
   runId: string;
   prompt: string;
   promptFormat?: PromptFormat;
@@ -69,8 +78,8 @@ export interface HarnessCapabilities {
   readonly nativeResume: boolean;
   /** Model API the CLI speaks; the model gateway serves the matching entry codec. */
   readonly modelWire: ModelWire;
-  /** `ephemeral`: one CLI thread per Run (implemented). `sticky`: reserved for session-resident
-   * CLIs. */
+  /** `ephemeral`: one CLI process per Run, optionally restoring a native thread when explicitly
+   * requested. `sticky`: reserved for session-resident CLIs. */
   readonly sessionPolicy: "ephemeral" | "sticky";
 }
 

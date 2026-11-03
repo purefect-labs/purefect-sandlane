@@ -50,11 +50,16 @@ import type { RunCredential, RunCredentialRegistry } from "./credentials.js";
 import { stageInputFiles, type StagedInputs } from "./input-files.js";
 import { deliverOutputs } from "./output-files.js";
 import { ManagedCliExecution } from "./managed-cli-execution.js";
-import { FrozenInputContext } from "./turn-input.js";
+import { FrozenInputContext, executionTurnInput } from "./turn-input.js";
+import { createHash } from "node:crypto";
+import type { NativeSnapshot } from "../common/native-session.js";
+import type { NativeCacheUse, NativeSessionCache } from "./native-session-cache.js";
 
 export type LaneLog = (code: string, fields?: Readonly<Record<string, string | number>>) => void;
 
 export interface LaneOptions {
+  /** Shared by all lanes of one Worker, explicitly enabled by its composition root. */
+  readonly nativeSessions?: NativeSessionCache;
   readonly runtimeId: string;
   /** Engine queue lanes to claim from (contract `lanes`). */
   readonly lanes: readonly string[];
@@ -214,11 +219,21 @@ export class ExecutionLane {
   private memoryUnknownLogged = false;
   private readonly drainSignal = new AbortController();
   private readonly options: Required<
-    Omit<LaneOptions, "admit" | "log" | "observe" | "allowLocalSandbox" | "admission" | "download">
+    Omit<
+      LaneOptions,
+      | "admit"
+      | "log"
+      | "observe"
+      | "allowLocalSandbox"
+      | "admission"
+      | "download"
+      | "nativeSessions"
+    >
   > & {
     readonly admit: LaneOptions["admit"] | undefined;
     readonly admission: LaneOptions["admission"] | undefined;
     readonly download: LaneOptions["download"] | undefined;
+    readonly nativeSessions: NativeSessionCache | undefined;
   };
   private readonly log: LaneLog;
   private readonly observe: StatusObserver;
@@ -292,6 +307,7 @@ export class ExecutionLane {
       admit: options.admit,
       admission: options.admission,
       download: options.download,
+      nativeSessions: options.nativeSessions,
       context: options.context ?? new FrozenInputContext()
     });
     const log = options.log ?? (() => {});
@@ -438,7 +454,12 @@ export class ExecutionLane {
 
   /** Retry delivery until accepted, rejected or the lease is clearly gone. Identical retries
    * are acknowledged as ALREADY_ACCEPTED by the Engine. */
-  async complete(proof: LeaseProof, outcome: Outcome, notAfter: number): Promise<boolean> {
+  async complete(
+    proof: LeaseProof,
+    outcome: Outcome,
+    notAfter: number,
+    onResult?: (result: import("../spi/control-plane.js").CompleteResult) => void
+  ): Promise<boolean> {
     let backoff = 250;
     for (;;) {
       try {
@@ -447,6 +468,7 @@ export class ExecutionLane {
           AbortSignal.timeout(15_000)
         );
         this.log("RUN_COMPLETED", { job: proof.job_id, status: outcome.status, result });
+        onResult?.(result);
         return true;
       } catch (error) {
         if (TERMINAL_COMPLETE_FAULTS.has(faultOf(error) ?? "")) {
@@ -479,6 +501,9 @@ interface PendingAction {
 
 /** State of one leased Run. */
 class RunExecution {
+  private nativeUse: NativeCacheUse | undefined;
+  private nativeCandidate: NativeSnapshot | undefined;
+  private nativeCancelled = false;
   private readonly control: ControlPlane;
   private readonly launcher: SandboxProvider;
   private readonly registry: RunCredentialRegistry;
@@ -612,13 +637,31 @@ class RunExecution {
         result("withheld");
         return;
       }
+      let successfulSettlement = false;
       const accepted = await this.lane.complete(
         this.proof,
         usage ? { ...outcome, usage } : outcome,
-        this.leaseUntil
+        this.leaseUntil,
+        result => {
+          successfulSettlement = result === "ACCEPTED";
+        }
       );
+      if (
+        accepted &&
+        successfulSettlement &&
+        outcome.status === "SUCCEEDED" &&
+        !this.cancelRequested &&
+        !this.shutdown &&
+        !this.lost &&
+        !this.outer.aborted &&
+        !this.nativeCancelled &&
+        !this.credential?.nativeRequestTooLarge
+      )
+        this.nativeUse?.finish(this.nativeCandidate, !!this.session?.nativeSession?.resume);
       result(accepted ? "settled" : "rejected");
     } finally {
+      this.nativeUse?.finish();
+      this.nativeCandidate = undefined;
       this.outer.removeEventListener("abort", onShutdown);
       this.rejectActions();
       // Idempotent: also covers failures thrown before the normal revoke point.
@@ -768,6 +811,58 @@ class RunExecution {
     }
 
     const capabilities = this.credential.capabilities();
+    const cache = settings.nativeSessions;
+    const nativeKey = JSON.stringify([
+      lease.run.tenant_id,
+      lease.run.identity.user_id,
+      lease.run.identity.tenant_access_id ?? null,
+      lease.run.conversation_id,
+      lease.run.harness
+    ]);
+    if (
+      cache &&
+      this.control.serialAppendOnlyConversations === true &&
+      settings.context.nativeSessionSafe === true &&
+      lease.run.harness === "codex" &&
+      lease.run.source?.type === "conversation" &&
+      lease.run.run_no !== undefined &&
+      !fileTools
+    ) {
+      const digest = (value: unknown) =>
+        createHash("sha256").update(JSON.stringify(value)).digest("hex");
+      this.nativeUse = cache.begin({
+        key: nativeKey,
+        tenant: lease.run.tenant_id,
+        runNo: lease.run.run_no,
+        fingerprint: digest([
+          model,
+          secrets.model_service.base_uri,
+          secrets.model_service.wire_api,
+          settings.modelAlias,
+          settings.toolServer,
+          lease.run.identity,
+          lease.run.web_access,
+          confirmOperations,
+          lease.run.tools ?? null,
+          this.reasoningEffort ?? null,
+          !!turn.instructions
+        ]),
+        contracts: Object.fromEntries(
+          runTools.map(name => [
+            name,
+            digest(
+              name === actions?.name && offer
+                ? { description: offer.description, inputSchema: offer.inputSchema }
+                : (controls.find(control => control.name === name)?.offer.inputSchema ?? name)
+            )
+          ])
+        )
+      });
+      this.log(
+        this.nativeUse?.snapshot ? "NATIVE_SESSION_CANDIDATE" : "NATIVE_SESSION_COLD",
+        this.fields
+      );
+    } else cache?.invalidate(nativeKey);
     // Allocation may take a while (cold image, busy node): keep the lease alive without
     // reporting "started"; nothing has executed yet, so a lost lease simply requeues the job.
     const opening = new AbortController();
@@ -804,6 +899,9 @@ class RunExecution {
           tenantId: lease.run.tenant_id,
           runId: lease.run.run_id,
           userId: lease.run.identity.user_id,
+          ...(lease.run.identity.tenant_access_id
+            ? { tenantAccessId: lease.run.identity.tenant_access_id }
+            : {}),
           generation: lease.generation,
           conversationId: lease.run.conversation_id,
           expiresAt: this.expiresAt,
@@ -818,6 +916,12 @@ class RunExecution {
           enabledTools: runTools,
           modelCapability: capabilities.model,
           toolCapability: capabilities.tool,
+          ...(this.nativeUse
+            ? {
+                nativeSession: true,
+                ...(this.nativeUse.snapshot ? { nativeState: this.nativeUse.snapshot } : {})
+              }
+            : {}),
           ...(inputs ? { inputs: inputs.files, outputsAbandoned: this.outputsWanted.signal } : {})
         },
         AbortSignal.any([this.outer, opening.signal, AbortSignal.timeout(OPEN_TIMEOUT_MS)])
@@ -875,6 +979,54 @@ class RunExecution {
         conversationId: lease.run.conversation_id,
         ...(turn.contextData ? { contextData: turn.contextData } : {}),
         ...(turn.instructions ? { instructions: turn.instructions } : {}),
+        ...(this.nativeUse && session.nativeSession && driver.nativeResume
+          ? {
+              nativeSession: {
+                ...(session.nativeSession.resume ? { resume: session.nativeSession.resume } : {}),
+                ...executionTurnInput(
+                  { ...lease.run.input, history: [] },
+                  lease.run.conversation_id
+                ),
+                capture: async thread => {
+                  if (
+                    this.outputsWanted.signal.aborted ||
+                    this.cancelRequested ||
+                    this.lost ||
+                    this.shutdown ||
+                    this.outer.aborted ||
+                    this.credential?.nativeRequestTooLarge
+                  )
+                    return;
+                  // Final assistant text is not part of the last upstream request. Keep separate
+                  // headroom for it and the next prompt; this is not a tokenizer guarantee.
+                  if (
+                    this.execution?.truncated ||
+                    Buffer.byteLength(JSON.stringify(this.execution?.preview ?? "")) > 32_000
+                  )
+                    return;
+                  // Close model/tool access before copying state, not after transport disposal.
+                  this.revoke();
+                  const snapshot = await session.nativeSession!.capture(
+                    thread,
+                    AbortSignal.any([
+                      this.outputsWanted.signal,
+                      this.outer,
+                      AbortSignal.timeout(5500)
+                    ])
+                  );
+                  const bytes = Buffer.from(
+                    snapshot.data.buffer,
+                    snapshot.data.byteOffset,
+                    snapshot.data.byteLength
+                  );
+                  if (bytes.includes(capabilities.model) || bytes.includes(capabilities.tool))
+                    return;
+                  if (!this.outputsWanted.signal.aborted && !this.outer.aborted)
+                    this.nativeCandidate = snapshot;
+                }
+              }
+            }
+          : {}),
         beforeTurn: () => admission,
         ...(fileTools ? { fileTools: true } : {}),
         expiresAt: this.expiresAt,
@@ -1155,6 +1307,11 @@ class RunExecution {
       this.timing("first-delta-synced");
     }
     for (const action of requests) action.requested = true;
+    if (response.cancel) {
+      this.nativeCancelled = true;
+      this.nativeCandidate = undefined;
+      this.nativeUse?.invalidate();
+    }
     this.credential?.renew(
       response.lease_until,
       response.agent_token && {
@@ -1580,6 +1737,7 @@ class RunExecution {
    * and tool calls), then let the loop stop the sandbox. */
   private markLost(): void {
     this.lost = true;
+    this.nativeUse?.invalidate();
     this.revoke();
     this.abandonOutputs();
     this.notify();

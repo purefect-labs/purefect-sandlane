@@ -9,6 +9,13 @@ upgrading.
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in native Codex 0.154.0 conversation reuse with a bounded, Worker-local rollout cache,
+  fresh per-Run processes and credentials, and fallback to platform history on cache misses.
+- An isolated Docker validation probe for native resume, tool history, configuration overrides,
+  and compaction through the SandLane model gateway (`npm run native:check`).
+
 ## [0.1.1] - 2026-10-29
 
 ### Added

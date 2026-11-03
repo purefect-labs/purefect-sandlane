@@ -382,6 +382,7 @@ async function main(): Promise<void> {
       });
     }
     const runtime = await createManagedRuntime({
+      nativeSessions: env.SANDLANE_NATIVE_SESSIONS === "true",
       controlPlane: control,
       broker: { socket: required(env, "SANDLANE_BROKER_SOCKET"), token: brokerToken, nodeId },
       concurrency,

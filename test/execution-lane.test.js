@@ -34,6 +34,78 @@ import { BrokerSandboxLauncher } from "../dist/sandbox/docker/broker-sandbox.js"
 import { BrokerHarnessTransport } from "../dist/sandbox/docker/broker-transport.js";
 import { FrozenInputContext } from "../dist/core/turn-input.js";
 import { StatusRecorder } from "../dist/status/recorder.js";
+import { NativeSessionCache } from "../dist/core/native-session-cache.js";
+
+test("native cache publishes only a successful stopped and explicitly accepted Run", async t => {
+  for (const [result, answer] of [
+    ["ACCEPTED", "native answer"],
+    ["ACCEPTED_AS_CANCELLED", "native answer"],
+    ["ALREADY_ACCEPTED", "native answer"],
+    ["ACCEPTED", "x".repeat(33_000)]
+  ]) {
+    const cache = new NativeSessionCache();
+    t.after(() => cache.close());
+    const { state, control } = await fakeEngine(t, {
+      complete: ({ reply }) => {
+        reply({ protocol: "purefect-ai-execution/1", result });
+        return true;
+      }
+    });
+    state.claimToken = "c".repeat(43);
+    const registry = new RunCredentialRegistry();
+    const id = "01234567-1234-1234-1234-123456789abc";
+    const thread = {
+      threadId: id,
+      path: `/home/runner/.codex/sessions/2026/11/03/rollout-2026-11-03T12-00-00-${id}.jsonl`
+    };
+    const snapshot = {
+      ...thread,
+      containerId: "c".repeat(64),
+      brokerEpoch: "a".repeat(36),
+      data: Buffer.from("fixture")
+    };
+    const launcher = fakeLauncher(() => {
+      const driver = fakeDriver(async (self, input) => {
+        assert.ok(input.nativeSession);
+        self.emitEvent("message.delta", { delta: answer });
+        self.emitEvent("run.completed");
+        await input.nativeSession.capture(thread);
+      });
+      driver.capabilities.nativeResume = true;
+      return driver;
+    });
+    const original = launcher.open;
+    launcher.open = async (...args) => {
+      const session = await original(...args);
+      session.nativeSession = {
+        ...(args[0].nativeState ? { resume: args[0].nativeState } : {}),
+        capture: async () => {
+          assert.equal(registry.size, 0, "Revoke before snapshot");
+          return snapshot;
+        }
+      };
+      return session;
+    };
+    const logs = [];
+    const worker = lane(control, launcher, registry, logs, { nativeSessions: cache });
+    const current = lease({ run: { source: { type: "conversation" }, run_no: 1 } });
+    await worker.execute(current, state.claimToken, new AbortController().signal);
+    state.events = [];
+    state.accepted = undefined;
+    await worker.execute(
+      lease({ run: { run_id: "202", source: { type: "conversation" }, run_no: 2 } }),
+      state.claimToken,
+      new AbortController().signal
+    );
+    assert.equal(
+      !!launcher.requests[1].nativeState,
+      result === "ACCEPTED" && answer.length < 32_000,
+      result
+    );
+    assert.equal(state.completes.length, 2);
+    assert.equal(state.completes[0].outcome.status, "SUCCEEDED");
+  }
+});
 
 const SERVICE_SECRET = "service-secret-" + "z".repeat(40);
 const AGENT_TOKEN = "agent-token-secret-" + "x".repeat(40);

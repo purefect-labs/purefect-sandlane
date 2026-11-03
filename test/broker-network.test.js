@@ -28,6 +28,56 @@ import { createBrokerServer, listenUnix } from "../dist/sandbox/docker/server.js
 import { BrokerClient } from "../dist/sandbox/docker/client.js";
 import { encodeInputs } from "../dist/sandbox/docker/session-inputs.js";
 import { decodeOutputs } from "../dist/sandbox/docker/session-outputs.js";
+import { encodeNative, decodeNative, NATIVE_STATE_BYTES } from "../dist/common/native-session.js";
+
+test("native state transfers are bounded, allocation-bound and only restore the original container", async t => {
+  const { engine, broker, spec } = await setup(t, true, true);
+  spec.session = { taskId: "task", memberId: "member" };
+  const record = await broker.allocateManaged({ spec, authorization: authorization(spec) });
+  const threadId = "01234567-1234-1234-1234-123456789abc";
+  const thread = {
+    threadId,
+    path: `/home/runner/.codex/sessions/2026/11/03/rollout-2026-11-03T12-00-00-${threadId}.jsonl`
+  };
+  await assert.rejects(broker.getNativeState({ ref: record.ref, ...thread }), {
+    code: "NATIVE_STATE_DENIED"
+  });
+  await broker.openChannel(record.ref, AbortSignal.timeout(1000));
+  engine.reply = () => Buffer.from("rollout");
+  const result = decodeNative(
+    Buffer.concat(await broker.getNativeState({ ref: record.ref, ...thread }))
+  );
+  assert.equal(result.data.toString(), "rollout");
+  assert.deepEqual(engine.execs.at(-1).Env, []);
+  assert.equal(engine.execs.at(-1).User, "1000:1000");
+  await assert.rejects(
+    broker.getNativeState({ ref: { ...record.ref, tenantId: "foreign" }, ...thread })
+  );
+  engine.reply = () => Buffer.alloc(NATIVE_STATE_BYTES + 1);
+  await assert.rejects(broker.getNativeState({ ref: record.ref, ...thread }), {
+    code: "NATIVE_STATE_FAILED"
+  });
+  engine.reply = undefined;
+  await broker.terminate(record.ref);
+  const next = { ...spec, allocationId: "next", runId: "next" };
+  const allocated = await broker.allocateManaged({
+    spec: next,
+    authorization: authorization(next)
+  });
+  const body = (changes = {}) =>
+    encodeNative({ ...result.header, ref: allocated.ref, ...changes }, result.data);
+  assert.deepEqual(await broker.putNativeState(body({ containerId: "f".repeat(64) })), {
+    restored: false
+  });
+  assert.deepEqual(await broker.putNativeState(body({ brokerEpoch: "f".repeat(36) })), {
+    restored: false
+  });
+  assert.deepEqual(await broker.putNativeState(body()), { restored: true });
+  assert.equal(Buffer.concat(engine.stdin.at(-1)).toString(), "rollout");
+  await broker.openChannel(allocated.ref, AbortSignal.timeout(1000));
+  await assert.rejects(broker.putNativeState(body()), { code: "NATIVE_STATE_DENIED" });
+  await broker.shutdown();
+});
 
 function relayFixture() {
   const routes = JSON.stringify([
@@ -265,7 +315,7 @@ async function setup(t, withRelay = false, managed = false) {
     maxConcurrent: 2,
     perTenant: 1,
     labelPrefix: "test.sandlane",
-    networkMode: "isolated",
+    networkMode: "isolated"
   };
   if (withRelay) {
     const { binding, info } = relayFixture();
@@ -502,7 +552,9 @@ test("Relay verifier rejects unsafe containers despite matching identity labels"
     const engine = new Engine();
     engine.relay = info;
     change(info);
-    await assert.rejects(verifyRelay(engine, "node", "test.sandlane", binding), { code: "RELAY_POLICY_MISMATCH" });
+    await assert.rejects(verifyRelay(engine, "node", "test.sandlane", binding), {
+      code: "RELAY_POLICY_MISMATCH"
+    });
   }
   assert.throws(() => parseRelayBinding({ containerId: "mutable-name" }));
 });
@@ -830,7 +882,9 @@ test("get outputs: listed as the runner, regular files read by exact name, the r
   assert.equal(engine.execs.length, execs + 1);
   // A file changed while read (tar exits 1) fails the whole read.
   engine.reply = command =>
-    command[0] === "find" ? Buffer.from(listing) : ustar([{ name: "report.pdf", data: Buffer.from("%PD") }]);
+    command[0] === "find"
+      ? Buffer.from(listing)
+      : ustar([{ name: "report.pdf", data: Buffer.from("%PD") }]);
   engine.exitCode = 1;
   await assert.rejects(broker.getOutputs(ref), { code: "OUTPUTS_FAILED" });
   engine.exitCode = 0;
@@ -864,7 +918,9 @@ test("get outputs over the Broker socket: JSON request, binary reply, JSON error
   const token = "t".repeat(40);
   const ref = { allocationId: "a", tenantId: "7", runId: "1", generation: 1 };
   const calls = [];
-  const header = Buffer.from(JSON.stringify({ files: [{ name: "月报.csv", size: 3 }], rejected: [] }));
+  const header = Buffer.from(
+    JSON.stringify({ files: [{ name: "月报.csv", size: 3 }], rejected: [] })
+  );
   const length = Buffer.alloc(4);
   length.writeUInt32BE(header.length);
   const server = createBrokerServer(

@@ -20,6 +20,15 @@ import { openBrokerChannel } from "./channel-client.js";
 import type { RunAuthorization } from "./managed-launch.js";
 import { encodeInputs, INPUTS_CONTENT_TYPE } from "./session-inputs.js";
 import {
+  decodeNative,
+  encodeNative,
+  nativeSnapshot,
+  nativeThread,
+  NATIVE_BODY_BYTES,
+  type NativeSnapshot,
+  type NativeThread
+} from "../../common/native-session.js";
+import {
   decodeOutputs,
   OUTPUTS_BODY_LIMIT,
   OUTPUTS_CONTENT_TYPE,
@@ -83,6 +92,43 @@ export class BrokerClient {
   }
   openChannel(ref: AllocationRef, expiresAt: number, signal: AbortSignal) {
     return openBrokerChannel(this.socketPath, this.token, ref, expiresAt, signal);
+  }
+  async putNativeState(
+    ref: AllocationRef,
+    snapshot: NativeSnapshot,
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    nativeSnapshot(snapshot);
+    const { data, ...header } = snapshot;
+    const reply = await this.send(
+      "/v1/native-state/restore",
+      encodeNative({ ref, ...header }, data),
+      INPUTS_CONTENT_TYPE,
+      signal
+    );
+    if (typeof reply.restored !== "boolean") throw Error("BROKER_PROTOCOL");
+    return reply.restored;
+  }
+  async getNativeState(
+    ref: AllocationRef,
+    thread: NativeThread,
+    signal?: AbortSignal
+  ): Promise<NativeSnapshot> {
+    const reply = await this.exchange(
+      "/v1/native-state/export",
+      Buffer.from(JSON.stringify({ ref, ...nativeThread(thread) })),
+      "application/json",
+      NATIVE_BODY_BYTES,
+      signal
+    );
+    if (reply.status !== 200 || reply.type !== OUTPUTS_CONTENT_TYPE) throw this.rejection(reply);
+    const { header, data } = decodeNative(reply.body);
+    return nativeSnapshot({
+      ...nativeThread(header),
+      containerId: String(header.containerId),
+      brokerEpoch: String(header.brokerEpoch),
+      data
+    });
   }
   private call(
     operation: string,

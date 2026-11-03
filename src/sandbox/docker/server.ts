@@ -22,6 +22,7 @@ import { BrokerError, object } from "./contracts.js";
 import { installBrokerChannels } from "./channel-server.js";
 import { INPUTS_BODY_LIMIT, INPUTS_CONTENT_TYPE } from "./session-inputs.js";
 import { OUTPUTS_CONTENT_TYPE } from "./session-outputs.js";
+import { NATIVE_BODY_BYTES } from "../../common/native-session.js";
 
 /** Binary operation: the raw body (at most `limit` bytes) instead of JSON. */
 export interface UploadOperation {
@@ -85,8 +86,17 @@ export function createBrokerServer(broker: SandboxBroker, token: string): http.S
       }
     },
     token,
-    { "/v1/inputs": { limit: INPUTS_BODY_LIMIT, handle: body => broker.putInputs(body) } },
-    { "/v1/outputs": value => broker.getOutputs(value) }
+    {
+      "/v1/inputs": { limit: INPUTS_BODY_LIMIT, handle: body => broker.putInputs(body) },
+      "/v1/native-state/restore": {
+        limit: NATIVE_BODY_BYTES,
+        handle: body => broker.putNativeState(body)
+      }
+    },
+    {
+      "/v1/outputs": value => broker.getOutputs(value),
+      "/v1/native-state/export": value => broker.getNativeState(value)
+    }
   );
   installBrokerChannels(server, broker, token);
   return server;

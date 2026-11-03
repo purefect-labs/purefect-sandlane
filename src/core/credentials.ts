@@ -38,6 +38,8 @@ const capability = () => randomBytes(32).toString("base64url");
 /** Runtime-memory credentials of one Run. Secrets live in private fields, so neither
  * JSON.stringify nor util.inspect can expose them; only capabilities enter the sandbox. */
 export class RunCredential implements RunCredentialView {
+  /** Conservative native-cache admission; the gateway still enforces its hard body limit. */
+  nativeRequestTooLarge = false;
   readonly id = randomUUID();
   readonly grant: RunGrant;
   readonly clientAction?: RunClientAction;

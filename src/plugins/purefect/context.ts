@@ -75,6 +75,9 @@ export function apiInstructions(
 }
 
 export class PurefectContext implements ContextProvider {
+  get nativeSessionSafe(): boolean {
+    return this.inner.nativeSessionSafe === true;
+  }
   constructor(
     private readonly inner: ContextProvider,
     private readonly options: PurefectContextOptions

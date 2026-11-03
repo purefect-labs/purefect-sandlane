@@ -175,6 +175,7 @@ Detailed operational documentation is currently available in Simplified Chinese:
 - [Tools and page actions](./docs/tools-and-page-actions.md)
 - [Status panel](./docs/status-panel.md)
 - [Memory integration](./docs/memory.md)
+- [Native Codex session reuse](./docs/native-sessions.md) (experimental, opt-in)
 - [Security](./SECURITY.md)
 - [Development and contributing](./CONTRIBUTING.md)
 

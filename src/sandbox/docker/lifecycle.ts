@@ -13,7 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  decodeNative,
+  encodeNative,
+  nativeSnapshot,
+  nativeThread,
+  NATIVE_STATE_BYTES
+} from "../../common/native-session.js";
+import { nativeCommand } from "./session-native.js";
 import { mkdir, open, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -166,6 +174,7 @@ function executionDeadline(record: RecordState): number {
 
 /** Node-local lifecycle ledger. It is NOT the platform Job/lease authority. */
 export class SandboxBroker {
+  private readonly nativeEpoch = randomUUID();
   private records = new Map<string, RecordState>();
   private tail: Promise<unknown> = Promise.resolve();
   private ready = false;
@@ -269,6 +278,7 @@ export class SandboxBroker {
       fixedRelay: this.config.relay !== undefined,
       harnesses: Object.keys(this.config.harnesses),
       managedLaunch: this.config.managedGateways !== undefined,
+      nativeState: "codex-rollout-v1",
       modelAccess: false,
       businessMcp: false
     };
@@ -828,6 +838,96 @@ export class SandboxBroker {
         );
       }
     });
+  }
+
+  /** Restore only to the same still-owned container before any CLI channel can open. */
+  async putNativeState(body: Buffer): Promise<{ restored: boolean }> {
+    const { header, data } = decodeNative(body);
+    const ref = parseRef(header.ref);
+    const snapshot = nativeSnapshot({
+      ...nativeThread(header),
+      containerId: String(header.containerId),
+      brokerEpoch: String(header.brokerEpoch),
+      data
+    });
+    return this.serial(async () => {
+      if (!this.ready || !this.healthy) throw new BrokerError("NOT_READY", 503, "Broker not ready");
+      const record = this.bound(ref);
+      if (
+        record.harness !== "codex" ||
+        !record.sessionKey ||
+        record.state !== "allocating" ||
+        record.channelOpened ||
+        executionDeadline(record) <= this.clock() ||
+        this.sessionLaunches.get(ref.allocationId)?.fileTools
+      )
+        throw new BrokerError("NATIVE_STATE_DENIED", 409, "Native restore unavailable");
+      const container = await this.inspectOwned(record);
+      if (
+        !container ||
+        container.id !== snapshot.containerId ||
+        snapshot.brokerEpoch !== this.nativeEpoch
+      )
+        return { restored: false };
+      if (!container.running) {
+        if (record.networkMode === "isolated")
+          await this.networks.validate(this.resource(record), undefined);
+        await this.engine.request("POST", `/containers/${container.id}/start`);
+      }
+      if (record.networkMode === "isolated")
+        await this.networks.validate(this.resource(record), container.id);
+      const deadline = Math.min(executionDeadline(record), this.clock() + 5000);
+      await new SessionProcesses(this.engine).extract(
+        container.id,
+        [data],
+        deadline,
+        AbortSignal.timeout(Math.max(1, deadline - this.clock())),
+        nativeCommand(snapshot, true)
+      );
+      return { restored: true };
+    });
+  }
+
+  /** Copy a single approved rollout before stop; the caller has already closed Run access. */
+  async getNativeState(value: unknown): Promise<Buffer[]> {
+    const input = object(value);
+    exactKeys(input, ["ref", "threadId", "path"]);
+    const ref = parseRef(input.ref),
+      thread = nativeThread(input);
+    const target = await this.serial(async () => {
+      if (!this.ready || !this.healthy) throw new BrokerError("NOT_READY", 503, "Broker not ready");
+      const record = this.bound(ref);
+      if (
+        record.harness !== "codex" ||
+        !record.sessionKey ||
+        record.state !== "running" ||
+        executionDeadline(record) <= this.clock() ||
+        this.inputDigests.has(ref.allocationId)
+      )
+        throw new BrokerError("NATIVE_STATE_DENIED", 409, "Native export unavailable");
+      const container = await this.inspectOwned(record);
+      if (!container?.running)
+        throw new BrokerError("NATIVE_STATE_DENIED", 409, "Container not running");
+      return {
+        id: container.id,
+        deadline: Math.min(executionDeadline(record), this.clock() + 5000)
+      };
+    });
+    const result = await new SessionProcesses(this.engine).read(
+      target.id,
+      nativeCommand(thread),
+      NATIVE_STATE_BYTES,
+      target.deadline,
+      AbortSignal.timeout(Math.max(1, target.deadline - this.clock()))
+    );
+    if (!result.complete || result.exitCode !== 0 || !result.stdout.length)
+      throw new BrokerError("NATIVE_STATE_FAILED", 503, "Native export failed");
+    return [
+      encodeNative(
+        { ...thread, containerId: target.id, brokerEpoch: this.nativeEpoch },
+        result.stdout
+      )
+    ];
   }
 
   /** Write the Run's input files into a session allocation's workspace before its CLI starts

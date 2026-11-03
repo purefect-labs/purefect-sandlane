@@ -57,6 +57,10 @@ export interface TurnContext {
 }
 
 export interface ContextProvider {
+  /** Opt-in promise: prompt uses executionTurnInput unchanged; current instructions replace
+   * earlier ones; no retained/revocable personal memory is added. Native resume rebuilds the
+   * prompt from frozen input without history. Decorators must deliberately propagate this. */
+  readonly nativeSessionSafe?: boolean;
   /** Throws when the input cannot be turned into a bounded turn (the Run fails as invalid input). */
   turn(request: TurnRequest, signal: AbortSignal): Promise<TurnContext>;
 }

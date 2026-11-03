@@ -31,14 +31,15 @@ import type {
 } from "../../spi/harness.js";
 import { codexManagedConfig, type CodexManagedConfig } from "./codex-managed-config.js";
 import { LocalProcessTransport } from "./local-process-transport.js";
+import { nativeThread, type NativeThread } from "../../common/native-session.js";
 
-/** Codex app-server speaks Responses to the model gateway; one ephemeral thread per Run. */
+/** Codex app-server speaks Responses to the model gateway; a fresh process for every Run. */
 export const CODEX_CAPABILITIES: HarnessCapabilities = Object.freeze({
   schemaVersion: 1,
   streamingText: true,
   interactiveInput: false,
   approvalBridge: false,
-  nativeResume: false,
+  nativeResume: true,
   modelWire: "responses",
   sessionPolicy: "ephemeral"
 });
@@ -80,6 +81,7 @@ export class CodexRunAdapter extends EventEmitter implements HarnessDriver {
   private readonly reasoningEffort: AdapterOptions["reasoningEffort"];
   private startedAt = 0;
   private firstText = false;
+  private completedSuccessfully = false;
   constructor(options: AdapterOptions) {
     super();
     this.workspace = options.workspace;
@@ -154,6 +156,7 @@ export class CodexRunAdapter extends EventEmitter implements HarnessDriver {
       },
       Math.min(input.expiresAt - Date.now(), 30 * 60_000)
     );
+    let thread: NativeThread | undefined;
     try {
       await this.transport.start({
         stdout: chunk => this.consume(chunk),
@@ -164,23 +167,40 @@ export class CodexRunAdapter extends EventEmitter implements HarnessDriver {
       });
       if (this.cancelled || this.terminal) return;
       this.timing("transport-ready");
-      await this.request("initialize", {
+      const initialized = await this.request("initialize", {
         clientInfo: { name: "sandlane-run-adapter", version: "0.1.0" },
         capabilities: {}
       });
       await this.write({ method: "initialized" });
       this.timing("cli-initialized");
-      const result = (await this.request("thread/start", {
+      // A new unvalidated CLI version keeps the existing ephemeral path, never guesses resume.
+      const agent = (initialized as { userAgent?: string })?.userAgent;
+      const native =
+        typeof agent === "string" && /(?:^|[\/ ])0\.154\.0(?:[ /]|$)/.test(agent)
+          ? this.input.nativeSession
+          : undefined;
+      if (native && this.input.fileTools) throw new Error("Native file sessions unsupported");
+      const resume = native?.resume;
+      const result = (await this.request(resume ? "thread/resume" : "thread/start", {
+        ...(resume ? { threadId: nativeThread(resume).threadId } : {}),
         cwd: this.workspace,
-        ephemeral: true,
+        ...(!resume ? { ephemeral: !native } : {}),
+        ...(native
+          ? { config: { model_auto_compact_token_limit: 8000, "features.memories": false } }
+          : {}),
         // File mode runs commands in the container itself (no network, read-only root, resource
         // limits); a Codex sandbox inside it cannot be set up and would block the work. Without
         // files the shell tool is off and the read-only sandbox stays as a second fence.
         sandbox: this.input.fileTools === true ? "danger-full-access" : "read-only",
         approvalPolicy: "never",
         ...(this.input.instructions ? { baseInstructions: this.input.instructions } : {})
-      })) as { thread?: { id?: string } };
+      })) as { thread?: { id?: string; path?: string } };
       if (!result.thread?.id) throw new Error("Missing thread ID");
+      if (native) {
+        thread = nativeThread({ threadId: result.thread.id, path: result.thread.path });
+        if (resume && (thread.threadId !== resume.threadId || thread.path !== resume.path))
+          throw new Error("Native thread mismatch");
+      }
       this.timing("thread-ready");
       if (this.input.beforeTurn) {
         // Cancellation or failure while waiting settles `done`; never start a turn afterwards.
@@ -199,7 +219,10 @@ export class CodexRunAdapter extends EventEmitter implements HarnessDriver {
             text,
             text_elements: []
           })),
-          ...managedTurnInput(this.input.prompt, this.input.promptFormat)
+          ...managedTurnInput(
+            resume ? native!.prompt : this.input.prompt,
+            resume ? native!.promptFormat : this.input.promptFormat
+          )
         ]
       });
       await done;
@@ -208,6 +231,13 @@ export class CodexRunAdapter extends EventEmitter implements HarnessDriver {
       this.fail(error instanceof Error ? error : new Error("Harness failure"));
     } finally {
       clearTimeout(deadline);
+      if (thread && this.completedSuccessfully && !this.cancelled) {
+        try {
+          await this.input?.nativeSession?.capture(thread);
+        } catch {
+          /* Cache is optional. */
+        }
+      }
       await this.dispose();
       this.timing("process-stopped");
     }
@@ -240,6 +270,7 @@ export class CodexRunAdapter extends EventEmitter implements HarnessDriver {
   ): void {
     if (this.terminal) return;
     this.terminal = true;
+    this.completedSuccessfully = type === "run.completed";
     this.emitEvent(type, data);
     this.finished?.();
   }

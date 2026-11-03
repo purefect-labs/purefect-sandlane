@@ -195,6 +195,7 @@ export function profileGuidance(instructions: string | undefined): string | unde
  * accept three, two are left for memory): placed in the user turn, a model may answer them rather
  * than the request, so system instructions are the primary place. */
 export class FrozenInputContext implements ContextProvider {
+  readonly nativeSessionSafe = true;
   constructor(private readonly instructions?: string) {}
 
   async turn(request: TurnRequest): Promise<TurnContext> {

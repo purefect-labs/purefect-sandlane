@@ -40,6 +40,7 @@ import type { ToolProvider } from "../spi/tool-provider.js";
 import type { ModelUpstreamFactory } from "../spi/model-upstream.js";
 import type { ReasoningEffort } from "../spi/control-plane.js";
 import { createRuntime, type RuntimeHandle, type RuntimeOptions } from "./runtime.js";
+import { NativeSessionCache } from "../core/native-session-cache.js";
 
 /** Bundled validated clients for composing trusted provider-specific routing/auth policies. */
 export { defaultUpstreams as createDefaultModelUpstreams } from "../gateway/model/local-authority.js";
@@ -58,6 +59,8 @@ export interface ManagedRuntimeOptions extends Omit<
   RuntimeOptions,
   "sandbox" | "credentials" | "lane"
 > {
+  /** Opt-in Codex rollout cache. Requires append-only control plane and compatible context. */
+  readonly nativeSessions?: boolean;
   readonly lane: Omit<RuntimeOptions["lane"], "admit" | "toolServer" | "enabledTools">;
   readonly broker: { readonly socket: string; readonly token: string; readonly nodeId: string };
   readonly tools: {
@@ -95,6 +98,7 @@ export interface ManagedRuntimeOptions extends Omit<
  * Use createRuntime for other sandbox implementations. A healthy managed Broker is required. */
 export async function createManagedRuntime(options: ManagedRuntimeOptions): Promise<RuntimeHandle> {
   let transferred = false;
+  const nativeSessions = options.nativeSessions === true ? new NativeSessionCache() : undefined;
   try {
     if (
       !Number.isSafeInteger(options.concurrency) ||
@@ -154,7 +158,19 @@ export async function createManagedRuntime(options: ManagedRuntimeOptions): Prom
       modelEndpoint.tls,
       modelEndpoint.hostname,
       {
-        respond: (...args) => track("model", () => model.respond(...args)),
+        respond: (...args) => {
+          if (nativeSessions) {
+            const credential = registry.byModelCapability(args[0]);
+            const body = args[3] as { input?: unknown[] };
+            if (
+              credential &&
+              (Buffer.byteLength(JSON.stringify(body)) > 128_000 ||
+                (Array.isArray(body?.input) && body.input.length > 256))
+            )
+              credential.nativeRequestTooLarge = true;
+          }
+          return track("model", () => model.respond(...args));
+        },
         messages: (...args) => track("model", () => model.messages(...args))
       },
       authority.lookup,
@@ -203,6 +219,7 @@ export async function createManagedRuntime(options: ManagedRuntimeOptions): Prom
         ...options.lane,
         toolServer: serverId,
         enabledTools: enabled,
+        ...(nativeSessions ? { nativeSessions } : {}),
         admit: credential => {
           authority.admit(credential);
           authority.warm(credential);
@@ -214,10 +231,14 @@ export async function createManagedRuntime(options: ManagedRuntimeOptions): Prom
         { server: toolServer, bind: toolEndpoint.bind, port: toolEndpoint.port },
         ...(options.endpoints ?? [])
       ],
-      ...(options.resources ? { resources: options.resources } : {}),
+      resources: [
+        ...(options.resources ?? []),
+        ...(nativeSessions ? [{ close: async () => nativeSessions.close() }] : [])
+      ],
       ...(options.log ? { log: options.log } : {})
     });
   } catch (error) {
+    nativeSessions?.close();
     if (transferred) throw error;
     const failures: unknown[] = [];
     for (const resource of [...(options.resources ?? [])].reverse()) {
