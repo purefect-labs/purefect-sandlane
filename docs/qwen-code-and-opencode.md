@@ -4,10 +4,10 @@ SandLane 内置四个显式维护的 Harness：Codex、Claude Code、Qwen Code �
 OpenCode 提供可公开构建和分发的开源 CLI 路径，但并不替换前两个 Harness；控制面按 Run 的
 `harness` 和模型协议选择其中之一。
 
-| Harness | 认证版本 | 许可证 | 模型协议 | 文本事件 | v1 工具范围 |
-| --- | --- | --- | --- | --- | --- |
-| `qwen-code` | `0.26.3` | Apache-2.0 | Responses | partial stream | 仅 Run 授权的 MCP |
-| `opencode` | `1.19.5` | MIT | Responses | completed block | 仅 Run 授权的 MCP |
+| Harness     | 认证版本 | 许可证     | 模型协议  | 文本事件        | v1 工具范围       |
+| ----------- | -------- | ---------- | --------- | --------------- | ----------------- |
+| `qwen-code` | `0.26.3` | Apache-2.0 | Responses | partial stream  | 仅 Run 授权的 MCP |
+| `opencode`  | `1.19.5` | MIT        | Responses | completed block | 仅 Run 授权的 MCP |
 
 版本认证不表示未来版本自动兼容。升级 CLI 后必须重新验证模型请求、MCP 函数名、JSONL 事件、取消、
 配置隔离和资源消耗，再更新镜像 digest。
@@ -80,6 +80,8 @@ purefect:
 Engine 仍负责按用户和租户选择连接器、模型和 Key；SandLane 只消费已授权的 Run 租约。不同用户可由
 控制面下发不同模型凭据，Worker 会为每个 Run 创建独立 capability。Broker 节点必须同时配置相应
 Harness 的 digest 镜像，否则该 Run 以 `harness_unavailable` 失败，不会回退到其他 CLI。
+
+两者均可选择开启[原生会话复用](./native-sessions.md)，但每个 Run 仍启动新进程并使用新的模型和工具 capability。Qwen Code 只传递单个 chat JSONL；OpenCode 使用官方 export/import，不复制其数据库。未命中、状态超限、容器释放或 Worker/Broker 重启时自动回到平台历史回放。
 
 ## 当前边界
 

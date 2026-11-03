@@ -74,11 +74,16 @@ npm test
 [契约同步流程](./control-plane.md#契约同步流程)更新并验证仓库副本。不要在有活动 Run 时替换 Broker
 state 目录、socket、Relay binding 或镜像映射。
 
+启用原生会话复用的节点升级 CLI 时，先 drain，再关闭 `SANDLANE_NATIVE_SESSIONS` 并更新 Broker、Worker
+和固定 digest 镜像；普通 Run 验收通过后才重新开启。CLI 版本不匹配会失败关闭，不应通过保留旧缓存或
+放宽版本检查规避。关闭开关并重启 Worker 即可回滚该优化，不要删除 Broker state 目录。
+
 ## 持久化与恢复
 
 - Worker 的 Run 凭据、事件缓冲和执行状态只在内存中，不做本地作业持久化。
 - Broker 的 `SANDLANE_BROKER_STATE_DIR` 保存分配 ledger 和锁，用于启动对账；只允许 Broker 身份访问。
 - CLI 的 `/workspace`、`/tmp` 和状态目录是每个 Run 的 tmpfs，容器停止即清空。
+- 可选原生会话状态只在 Worker 有界内存缓存中，不跨 Worker/Broker 重启，也不是 Run 恢复或业务备份。
 - 可选单机记忆存储位于 `SANDLANE_MEMORY_DIRECTORY/memory/memory.sqlite`；启用时单独备份并限制权限。
 - 对话、Run 和最终状态的事实源在控制面，不在 SandLane 节点。
 

@@ -55,6 +55,7 @@ test("native cache publishes only a successful stopped and explicitly accepted R
     const registry = new RunCredentialRegistry();
     const id = "01234567-1234-1234-1234-123456789abc";
     const thread = {
+      kind: "codex-rollout-v1",
       threadId: id,
       path: `/home/runner/.codex/sessions/2026/11/03/rollout-2026-11-03T12-00-00-${id}.jsonl`
     };

@@ -1,6 +1,6 @@
-# Codex 原生会话复用（实验性）
+# 原生会话复用（实验性）
 
-连续对话可以选择恢复 Codex 的原生工具历史与压缩上下文。每轮仍创建新的 CLI 进程和 Run 凭据；不复用正在运行的任务，也不把多个请求并成一个 Run。默认关闭，未命中时沿用平台历史回放。
+连续对话可以选择恢复 CLI 自己的会话历史，包括此前的工具调用上下文。每轮仍创建新的 CLI 进程和 Run 凭据；不复用正在运行的任务，也不把多个请求并成一个 Run。默认关闭，未命中时沿用平台历史回放。
 
 ## 开启方式
 
@@ -10,7 +10,9 @@
 SANDLANE_NATIVE_SESSIONS=true
 ```
 
-Compose 已传入此变量。自定义组合根使用 `createManagedRuntime({ nativeSessions: true, ... })`。目前仅支持 Codex **0.154.0**；其他版本、其他 CLI、旧 Broker 自动沿用原有执行路径。
+Compose 已传入此变量。自定义组合根使用 `createManagedRuntime({ nativeSessions: true, ... })`。当前固定支持 Codex **0.154.0**、Claude Code **2.1.301**、Qwen Code **0.26.3** 和 OpenCode **1.19.5**。不支持该状态类型的旧 Broker 不会收到新授权字段，本轮按平台历史冷启动。
+
+CLI 版本是经过验证的协议边界，不是兼容范围提示。开关开启后，镜像中的 Qwen Code、OpenCode 或 Claude Code 版本不匹配会让该 Run 失败关闭，不会用未知格式静默恢复；Codex 同样校验 app-server 版本。升级 CLI 前须重新完成兼容验证并更新实现，紧急回滚时关闭开关、重启 Worker 清空内存缓存，即恢复默认平台历史路径。
 
 控制面须明确声明 `serialAppendOnlyConversations: true`：同会话串行执行，`run_no` 单调递增，历史只追加。上下文提供器须声明 `nativeSessionSafe: true`，遵守该 SPI 的输入构造契约。内置 Purefect 控制面与基础上下文已接入；个人记忆装饰器不启用此能力。将来增加历史编辑、删除或重新生成时，必须先补充失效协议或关闭该模式。
 
@@ -26,17 +28,26 @@ Compose 已传入此变量。自定义组合根使用 `createManagedRuntime({ na
 
 ## 状态与资源边界
 
-Worker 仅在内存中缓存一个受限的 Codex rollout 文件，不复制凭据、配置目录、索引数据库或整个工作区。Broker 在 CLI 通道关闭前读取文件，下轮启动前写入 tmpfs；路径白名单、禁止符号链接、字节限制与超时共同约束传输。
+Worker 仅在内存中缓存一个受限的原生状态，不复制凭据、配置目录、数据库或整个工作区。Broker 在 CLI 通道关闭前读取状态，下轮启动前写入 tmpfs；路径白名单、禁止符号链接、字节限制与超时共同约束传输。
 
-| 项目 | 当前限制 |
-| --- | --- |
-| 单份原生状态 | 1 MiB，超限不缓存 |
-| Worker 缓存预算 | 32 MiB；单租户 16 MiB |
-| 活跃传输预留 | 每轮 8 MiB，计入上述预算；另计缓存元数据预算 |
-| 空闲 TTL | 5 分钟 |
-| 同一恢复链最长寿命 | 1 小时 |
-| 请求预算保护 | 任一模型请求超过 128,000 字节或 256 个 input item，本轮不再缓存 |
-| 终局回答预算 | JSON 编码超过 32,000 字节或被 Worker 截断，本轮不再缓存 |
+| Harness     | 受控状态                 | 恢复方式                    |
+| ----------- | ------------------------ | --------------------------- |
+| Codex       | 单个 rollout JSONL       | `thread/resume`             |
+| Claude Code | 单个 session JSONL       | `--resume <session-id>`     |
+| Qwen Code   | 单个 chat JSONL          | `--resume <session-id>`     |
+| OpenCode    | 官方导出的单个 JSON 文件 | `import` 后 `run --session` |
+
+状态带有 Harness kind，Broker 同时校验 Harness、会话 ID 和固定路径；不同 CLI 的状态不能互用。OpenCode 不复制内部 SQLite。Qwen Code 和 OpenCode 由镜像内受信任 shim 在原生模式下执行精确版本检查；Claude Code 从 init 帧校验版本；Codex 从 app-server 初始化结果校验版本。
+
+| 项目               | 当前限制                                                        |
+| ------------------ | --------------------------------------------------------------- |
+| 单份原生状态       | 1 MiB，超限不缓存                                               |
+| Worker 缓存预算    | 32 MiB；单租户 16 MiB                                           |
+| 活跃传输预留       | 每轮 8 MiB，计入上述预算；另计缓存元数据预算                    |
+| 空闲 TTL           | 5 分钟                                                          |
+| 同一恢复链最长寿命 | 1 小时                                                          |
+| 请求预算保护       | 任一模型请求超过 128,000 字节或 256 个 input item，本轮不再缓存 |
+| 终局回答预算       | JSON 编码超过 32,000 字节或被 Worker 截断，本轮不再缓存         |
 
 预算用于约束本功能的缓存和传输，并非整个 Worker RSS 上限。预算不足时淘汰闲置缓存或不启用本轮缓存。缓存不落盘、不跨 Worker 共享，也不新增卷或持久化 ledger。
 
@@ -46,9 +57,9 @@ Worker 仅在内存中缓存一个受限的 Codex rollout 文件，不复制凭�
 
 ## 验证与运维
 
-日志中的 `NATIVE_SESSION_CANDIDATE` 表示找到候选缓存，仍须 Broker 和 CLI 验证；`NATIVE_SESSION_COLD` 表示走冷启动，不等于故障。关闭开关并重启 Worker 即清空缓存并回到默认路径。
+日志中的 `NATIVE_SESSION_CANDIDATE` 表示找到候选缓存，仍须 Broker 和 CLI 验证；`NATIVE_SESSION_COLD` 表示走冷启动，不等于故障。部署时先更新 Broker 和 Worker，保持开关关闭完成普通 Run 验收，再开启 Worker 开关。回滚时先关闭开关并重启 Worker 以清空缓存；不需要清理 Broker ledger 或 CLI 容器状态。
 
-可使用本地已安装的固定 CLI 镜像运行无付费模型探针：
+Codex 可使用本地已安装的固定 CLI 镜像运行无付费模型探针：
 
 ```sh
 docker image inspect YOUR_CODEX_IMAGE --format '{{.Id}}'
@@ -57,6 +68,8 @@ NATIVE_SESSION_IMAGE=sha256:YOUR_LOCAL_IMAGE_ID npm run native:check
 
 探针使用隔离 Docker 网络、真实 SandLane 模型网关、fixture 上游及假 MCP，并清理自己创建的资源。2026-11-03 在 linux/arm64、Codex 0.154.0 上验证了：跨进程恢复工具历史、新凭据和配置生效、恢复阶段无模型/工具执行、手动及自动压缩、生产 Driver 和状态读写辅助程序、符号链接拒绝。
 
-本配置下压缩走自定义 provider 的 `/v1/responses`，未新增 `/compact` 路由。自动压缩阈值为 8,000 token；这不是字节限额保证，单个巨大工具结果仍可能使当前 Run 超限失败。默认测试覆盖缓存、隔离、停止与结算等组件边界；上述探针不替代真实 Engine 联调、目标 amd64 环境验收或长期压力测试。
+同日使用本地 fixture 上游和固定 linux/arm64 镜像验证了 Claude Code 2.1.301、Qwen Code 0.26.3 和 OpenCode 1.19.5：两个独立 CLI 进程恢复同一 session，第二轮状态同时保留前后两轮内容，新的模型凭据不写入受控状态；OpenCode 使用官方 export/import。该验证不调用付费模型，不代表长期压力测试或生产认证。OpenCode 当前关闭其 compaction agent，因此只承诺有界状态内的历史延续，不承诺长会话自动压缩。
+
+Codex 的压缩走自定义 provider 的 `/v1/responses`，未新增 `/compact` 路由；自动压缩阈值为 8,000 token。这不是字节限额保证，单个巨大工具结果仍可能使当前 Run 超限失败。默认测试覆盖缓存、隔离、停止与结算等组件边界；上述探针不替代真实 Engine 联调、目标 amd64 环境验收或长期压力测试。
 
 平台历史回放与长期记忆扩展见[会话上下文与记忆](./memory.md)。

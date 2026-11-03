@@ -17,6 +17,7 @@
  * (Anthropic Messages) and the tool gateway (MCP over HTTP). Measured against CLI 2.1.301; all
  * Claude Code specific settings live in this directory. */
 import type { HarnessLaunch, HarnessLaunchConfig, HarnessLauncher } from "../../spi/harness.js";
+import { nativeThread, type NativeThread } from "../../common/native-session.js";
 import {
   CLAUDE_CODE_FILE_FUNCTIONS,
   CLAUDE_CODE_WEB_FUNCTIONS,
@@ -148,7 +149,7 @@ export function claudeCodeLaunch(config: HarnessLaunchConfig): HarnessLaunch {
     ];
     return {
       args: [
-        ...SESSION_ARGS,
+        ...SESSION_ARGS.filter(arg => !config.nativeSession || arg !== "--no-session-persistence"),
         "--tools",
         builtIn.join(","),
         "--model",
@@ -178,5 +179,13 @@ export const claudeCodeLauncher: HarnessLauncher = Object.freeze({
   args: Object.freeze([...SESSION_ARGS, "--tools", CLAUDE_CODE_WEB_FUNCTIONS.join(",")]),
   env: ENV,
   stateDirs: Object.freeze([CONFIG_DIR]),
-  configure: claudeCodeLaunch
+  configure: claudeCodeLaunch,
+  resume: (launch: HarnessLaunch, thread: NativeThread) => ({
+    args: [
+      ...launch.args.filter(arg => arg !== "--no-session-persistence"),
+      "--resume",
+      nativeThread(thread, "claude-session-v1").threadId
+    ],
+    env: { ...launch.env }
+  })
 });

@@ -136,6 +136,7 @@ test("Qwen Code driver waits for admission and maps partial text, tools and resu
     message: { content: [{ type: "tool_result", tool_use_id: "tool_1" }] }
   });
   transport.send({ type: "result", subtype: "success", is_error: false });
+  transport.send({ _sandlane: { schemaVersion: 1, event: "exit", code: 0 } });
   await running;
   assert.deepEqual(
     events.map(event => event.type),
@@ -160,6 +161,135 @@ test("OpenCode driver completes only on the shim exit and preserves a prior erro
       events.map(event => event.type),
       ["message.delta", failed ? "run.failed" : "run.completed"]
     );
+  }
+});
+
+test("single-shot native sessions send only the current turn and capture before stop", async () => {
+  const cases = [
+    {
+      Driver: QwenCodeDriver,
+      thread: {
+        kind: "qwen-session-v1",
+        threadId: "01234567-1234-1234-1234-123456789abc",
+        path: "/home/runner/.qwen/sandlane/projects/-workspace/chats/01234567-1234-1234-1234-123456789abc.jsonl"
+      },
+      beforeExit: transport =>
+        transport.send({ type: "result", subtype: "success", is_error: false })
+    },
+    {
+      Driver: OpenCodeDriver,
+      thread: {
+        kind: "opencode-export-v1",
+        threadId: "ses_0123456789abcdef",
+        path: "/home/runner/.local/state/opencode/sandlane/native/ses_0123456789abcdef.json"
+      },
+      beforeExit: () => {}
+    }
+  ];
+  for (const item of cases) {
+    const transport = new FakeTransport();
+    const driver = new item.Driver({ transport });
+    let captured;
+    const running = driver.execute(
+      input({
+        prompt: "full history",
+        nativeSession: {
+          resume: item.thread,
+          prompt: "current only",
+          promptFormat: "text",
+          capture: async value => {
+            assert.equal(transport.stopped, false);
+            captured = value;
+          }
+        }
+      })
+    );
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(JSON.parse(transport.writes[0]).prompt, "current only");
+    item.beforeExit(transport);
+    transport.send({
+      _sandlane: {
+        schemaVersion: 1,
+        event: "exit",
+        code: 0,
+        phase: "child",
+        nativeSession: item.thread
+      }
+    });
+    await running;
+    assert.deepEqual(captured, item.thread);
+  }
+});
+
+test("single-shot native session refuses missing or cross-Harness state", async () => {
+  for (const nativeSession of [
+    undefined,
+    {
+      kind: "opencode-export-v1",
+      threadId: "ses_0123456789abcdef",
+      path: "/home/runner/.local/state/opencode/sandlane/native/ses_0123456789abcdef.json"
+    }
+  ]) {
+    const transport = new FakeTransport();
+    const driver = new QwenCodeDriver({ transport });
+    const events = [];
+    driver.on("event", event => events.push(event));
+    const running = driver.execute(
+      input({
+        nativeSession: {
+          prompt: "current",
+          promptFormat: "text",
+          capture: async () => assert.fail("must not capture")
+        }
+      })
+    );
+    await new Promise(resolve => setImmediate(resolve));
+    transport.send({ type: "result", subtype: "success", is_error: false });
+    transport.send({
+      _sandlane: {
+        schemaVersion: 1,
+        event: "exit",
+        code: 0,
+        ...(nativeSession ? { nativeSession } : {})
+      }
+    });
+    await running;
+    assert.equal(events.at(-1).type, "run.failed");
+  }
+});
+
+test("single-shot exit frames reject extra fields and state on failure", async () => {
+  for (const exit of [
+    { schemaVersion: 1, event: "exit", code: 0, unexpected: true },
+    {
+      schemaVersion: 1,
+      event: "exit",
+      code: 125,
+      nativeSession: {
+        kind: "qwen-session-v1",
+        threadId: "01234567-1234-1234-1234-123456789abc",
+        path: "/home/runner/.qwen/sandlane/projects/-workspace/chats/01234567-1234-1234-1234-123456789abc.jsonl"
+      }
+    }
+  ]) {
+    const transport = new FakeTransport();
+    const driver = new QwenCodeDriver({ transport });
+    const events = [];
+    driver.on("event", event => events.push(event));
+    const running = driver.execute(
+      input({
+        nativeSession: {
+          prompt: "current",
+          promptFormat: "text",
+          capture: async () => assert.fail("must not capture")
+        }
+      })
+    );
+    await new Promise(resolve => setImmediate(resolve));
+    transport.send({ type: "result", subtype: "success", is_error: false });
+    transport.send({ _sandlane: exit });
+    await running;
+    assert.equal(events.at(-1).type, "run.failed");
   }
 });
 
@@ -201,6 +331,24 @@ test("single-shot launchers expose only scoped configuration and reject file mod
   assert.ok(openCodeLauncher.stateDirs.includes("/home/runner/.config/opencode"));
   assert.throws(() => qwenCodeLauncher.configure({ ...config(), fileTools: true }), /Invalid/);
   assert.throws(() => openCodeLauncher.configure({ ...config(), fileTools: true }), /Invalid/);
+  const qwenNative = qwenCodeLauncher.configure({ ...config(), nativeSession: true });
+  assert.equal(qwenNative.env.SANDLANE_NATIVE_SESSION, "cold");
+  const qwenThread = {
+    kind: "qwen-session-v1",
+    threadId: "01234567-1234-1234-1234-123456789abc",
+    path: "/home/runner/.qwen/sandlane/projects/-workspace/chats/01234567-1234-1234-1234-123456789abc.jsonl"
+  };
+  assert.deepEqual(
+    JSON.parse(qwenCodeLauncher.resume(qwenNative, qwenThread).env.SANDLANE_NATIVE_SESSION),
+    qwenThread
+  );
+  assert.throws(() =>
+    qwenCodeLauncher.resume(qwenNative, {
+      kind: "opencode-export-v1",
+      threadId: "ses_0123456789abcdef",
+      path: "/home/runner/.local/state/opencode/sandlane/native/ses_0123456789abcdef.json"
+    })
+  );
 });
 
 test("launch shim writes private managed configs without placing the prompt in child arguments", async t => {
@@ -250,6 +398,15 @@ test("launch shim writes private managed configs without placing the prompt in c
     "write_file"
   ]);
   assert.equal(qwen.env.QWEN_HOME, `${root}/qwen`);
+  const qwenNative = await invocation(
+    { ...common, harness: "qwen-code", nativeSession: { mode: "cold" } },
+    start,
+    `${root}/qwen-native`
+  );
+  assert.equal(qwenNative.expectedVersion, "0.26.3");
+  assert.equal(qwenNative.args.includes("--no-chat-recording"), false);
+  assert.equal(qwenNative.args.includes("--session-id"), true);
+  assert.equal(qwenNative.nativeThread.kind, "qwen-session-v1");
   assert.equal((await stat(`${root}/qwen/qwen-mcp.json`)).mode & 0o777, 0o600);
   assert.equal((await stat(`${root}/qwen/settings.json`)).mode & 0o777, 0o600);
   assert.deepEqual(JSON.parse(await readFile(`${root}/qwen/settings.json`, "utf8")), {
@@ -270,6 +427,22 @@ test("launch shim writes private managed configs without placing the prompt in c
   assert.equal(openConfig.agent.title.disable, true);
   assert.equal(openConfig.agent.summary.disable, true);
   assert.equal(openConfig.agent.compaction.disable, true);
+  const openThread = {
+    kind: "opencode-export-v1",
+    threadId: "ses_0123456789abcdef",
+    path: "/home/runner/.local/state/opencode/sandlane/native/ses_0123456789abcdef.json"
+  };
+  const openResume = await invocation(
+    {
+      ...common,
+      harness: "opencode",
+      nativeSession: { mode: "resume", thread: openThread }
+    },
+    start,
+    `${root}/open-resume`
+  );
+  assert.equal(openResume.expectedVersion, "1.19.5");
+  assert.deepEqual(openResume.args.slice(-2), ["--session", openThread.threadId]);
   for (const variable of [
     "OPENCODE_PURE",
     "OPENCODE_DISABLE_PROJECT_CONFIG",

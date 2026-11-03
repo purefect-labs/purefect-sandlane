@@ -20,6 +20,11 @@ import {
   promptByteLimit
 } from "../../common/turn-envelope.js";
 import type { ReasoningEffort } from "../../spi/control-plane.js";
+import {
+  nativeThread,
+  type NativeStateKind,
+  type NativeThread
+} from "../../common/native-session.js";
 import type {
   HarnessCapabilities,
   HarnessDriver,
@@ -70,6 +75,7 @@ export interface SingleShotDriverOptions {
   readonly protocol: () => SingleShotProtocol;
   readonly reasoningEffort?: ReasoningEffort;
   readonly onTiming?: (runId: string, phase: string, elapsedMs: number) => void;
+  readonly nativeKind?: NativeStateKind;
 }
 
 /** One process and one turn. A trusted image shim receives one bounded start frame only after
@@ -80,6 +86,7 @@ export class SingleShotDriver extends EventEmitter implements HarnessDriver {
   private readonly protocol: SingleShotProtocol;
   private readonly reasoningEffort: ReasoningEffort | undefined;
   private readonly onTiming: SingleShotDriverOptions["onTiming"];
+  private readonly nativeKind: NativeStateKind | undefined;
   private input: RunInput | undefined;
   private sequence = 0;
   private buffer = Buffer.alloc(0);
@@ -91,6 +98,8 @@ export class SingleShotDriver extends EventEmitter implements HarnessDriver {
   private finished: (() => void) | undefined;
   private disposal: Promise<void> | undefined;
   private stopped: ProcessStopEvidence | undefined;
+  private nativeThread: NativeThread | undefined;
+  private completedSuccessfully = false;
 
   constructor(options: SingleShotDriverOptions) {
     super();
@@ -101,6 +110,7 @@ export class SingleShotDriver extends EventEmitter implements HarnessDriver {
     this.capabilities = this.protocol.capabilities;
     this.reasoningEffort = options.reasoningEffort;
     this.onTiming = options.onTiming;
+    this.nativeKind = options.nativeKind;
   }
 
   get stopEvidence(): ProcessStopEvidence | undefined {
@@ -135,7 +145,12 @@ export class SingleShotDriver extends EventEmitter implements HarnessDriver {
         Buffer.byteLength(JSON.stringify(input.contextData)) > CONTEXT_LIMIT)
     )
       throw new Error("MEMORY_CONTEXT_LIMIT");
-    const prompt = [...(input.contextData ?? []), ...turn.map(item => item.text)].join("\n\n");
+    const promptTurn = input.nativeSession?.resume
+      ? managedTurnInput(input.nativeSession.prompt, input.nativeSession.promptFormat)
+      : turn;
+    const prompt = [...(input.contextData ?? []), ...promptTurn.map(item => item.text)].join(
+      "\n\n"
+    );
     this.input = Object.freeze({ ...input });
     const now = performance.now();
     const origin = input.timingOrigin;
@@ -180,6 +195,13 @@ export class SingleShotDriver extends EventEmitter implements HarnessDriver {
       this.fail("HARNESS_FAILURE");
     } finally {
       clearTimeout(deadline);
+      if (this.nativeThread && this.completedSuccessfully && !this.cancelled) {
+        try {
+          await this.input?.nativeSession?.capture(this.nativeThread);
+        } catch {
+          /* Native state is an optional optimization. */
+        }
+      }
       await this.dispose();
       this.timing("process-stopped");
     }
@@ -232,8 +254,12 @@ export class SingleShotDriver extends EventEmitter implements HarnessDriver {
       const shim = record._sandlane;
       if (shim && typeof shim === "object" && !Array.isArray(shim)) {
         const exit = shim as Record<string, unknown>;
+        const exitKeys = Object.keys(exit);
         if (
           Object.keys(record).length !== 1 ||
+          exitKeys.some(
+            key => !["schemaVersion", "event", "code", "phase", "nativeSession"].includes(key)
+          ) ||
           exit.schemaVersion !== 1 ||
           exit.event !== "exit" ||
           !Number.isSafeInteger(exit.code) ||
@@ -243,6 +269,24 @@ export class SingleShotDriver extends EventEmitter implements HarnessDriver {
             !SHIM_PHASES.includes(exit.phase as (typeof SHIM_PHASES)[number]))
         )
           return this.fail("HARNESS_PROTOCOL");
+        if (exit.nativeSession !== undefined) {
+          try {
+            if (exit.code !== 0 || !this.input?.nativeSession || !this.nativeKind)
+              throw new Error();
+            const thread = nativeThread(exit.nativeSession, this.nativeKind);
+            const resume = this.input.nativeSession.resume;
+            if (
+              resume &&
+              (resume.kind !== thread.kind ||
+                resume.threadId !== thread.threadId ||
+                resume.path !== thread.path)
+            )
+              throw new Error();
+            this.nativeThread = thread;
+          } catch {
+            return this.fail("HARNESS_PROTOCOL");
+          }
+        } else if (this.input?.nativeSession) return this.fail("HARNESS_PROTOCOL");
         if (this.terminal) return;
         if (typeof exit.phase === "string") this.timing(`shim-${exit.phase}`);
         const terminal = this.protocol.exited(Number(exit.code));
@@ -283,6 +327,7 @@ export class SingleShotDriver extends EventEmitter implements HarnessDriver {
   private end(type: SingleShotTerminal["type"], data: Record<string, unknown> = {}): void {
     if (this.terminal) return;
     this.terminal = true;
+    this.completedSuccessfully = type === "run.completed";
     if (!this.input) return;
     this.emit("event", {
       schemaVersion: 1,

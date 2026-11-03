@@ -15,7 +15,8 @@
  * limitations under the License.
  */
 import { spawn } from "node:child_process";
-import { chmod, mkdir, realpath, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { chmod, mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 const START_LIMIT = 128 * 1024;
@@ -24,6 +25,9 @@ const INSTRUCTIONS_LIMIT = 16_000;
 const CAPABILITY = /^[A-Za-z0-9_-]{43}$/;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const SERVER = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+const OPENCODE_ID = /^ses_[A-Za-z0-9]{12,64}$/;
+const STATE_LIMIT = 1024 * 1024;
 const MANAGED_ROOTS = Object.freeze({
   "qwen-code": "/home/runner/.qwen/sandlane",
   opencode: "/home/runner/.config/opencode/sandlane"
@@ -81,6 +85,31 @@ function endpoint(env, key) {
   return parsed.href;
 }
 
+function nativeSession(raw, harness) {
+  const value = raw.SANDLANE_NATIVE_SESSION;
+  if (value === undefined) return undefined;
+  if (value === "cold") return Object.freeze({ mode: "cold" });
+  let parsed;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("SHIM_CONFIGURATION");
+  }
+  if (!exact(parsed, ["kind", "threadId", "path"])) throw new Error("SHIM_CONFIGURATION");
+  const expected = harness === "qwen-code" ? "qwen-session-v1" : "opencode-export-v1";
+  const valid =
+    expected === "qwen-session-v1"
+      ? UUID.test(parsed.threadId) &&
+        parsed.path ===
+          `/home/runner/.qwen/sandlane/projects/-workspace/chats/${parsed.threadId}.jsonl`
+      : OPENCODE_ID.test(parsed.threadId) &&
+        parsed.path ===
+          `/home/runner/.local/state/opencode/sandlane/native/${parsed.threadId}.json`;
+  if (parsed.kind !== expected || typeof parsed.path !== "string" || !valid)
+    throw new Error("SHIM_CONFIGURATION");
+  return Object.freeze({ mode: "resume", thread: Object.freeze({ ...parsed }) });
+}
+
 function environment(raw = process.env) {
   const harness = required(raw, "SANDLANE_SINGLE_SHOT_HARNESS", /^(qwen-code|opencode)$/);
   const toolsRaw = required(raw, "SANDLANE_MCP_TOOLS", /^[\x20-\x7e]+$/, 16_000);
@@ -106,7 +135,8 @@ function environment(raw = process.env) {
     mcpUrl: endpoint(raw, "SANDLANE_MCP_URL"),
     mcpServer: required(raw, "SANDLANE_MCP_SERVER", SERVER),
     mcpCapability: required(raw, "SANDLANE_MCP_CAPABILITY", CAPABILITY),
-    tools: Object.freeze(tools)
+    tools: Object.freeze(tools),
+    nativeSession: nativeSession(raw, harness)
   });
 }
 
@@ -200,6 +230,11 @@ export async function invocation(config, start, root = "/tmp/sandlane-harness") 
     const allowed = config.tools.map(
       tool => `mcp__${config.mcpServer}__${tool.replaceAll(".", "_")}`
     );
+    const sessionId = config.nativeSession
+      ? config.nativeSession.mode === "resume"
+        ? config.nativeSession.thread.threadId
+        : randomUUID()
+      : undefined;
     return {
       command: "/usr/local/bin/qwen",
       args: [
@@ -213,7 +248,11 @@ export async function invocation(config, start, root = "/tmp/sandlane-harness") 
         "--output-format",
         "stream-json",
         "--include-partial-messages",
-        "--no-chat-recording",
+        ...(sessionId
+          ? config.nativeSession.mode === "resume"
+            ? ["--resume", sessionId]
+            : ["--chat-recording", "--session-id", sessionId]
+          : ["--no-chat-recording"]),
         "--no-telemetry",
         "--mcp-config",
         mcp,
@@ -238,7 +277,17 @@ export async function invocation(config, start, root = "/tmp/sandlane-harness") 
         QWEN_HOME: root,
         QWEN_CODE_NO_UPDATE_NOTIFIER: "1",
         QWEN_CODE_DISABLE_TELEMETRY: "1"
-      }
+      },
+      ...(sessionId
+        ? {
+            expectedVersion: "0.26.3",
+            nativeThread: {
+              kind: "qwen-session-v1",
+              threadId: sessionId,
+              path: `${root}/projects/-workspace/chats/${sessionId}.jsonl`
+            }
+          }
+        : {})
     };
   }
 
@@ -288,7 +337,10 @@ export async function invocation(config, start, root = "/tmp/sandlane-harness") 
       `openai/${config.modelAlias}`,
       "--agent",
       "sandlane",
-      ...(start.reasoningEffort ? ["--variant", start.reasoningEffort] : [])
+      ...(start.reasoningEffort ? ["--variant", start.reasoningEffort] : []),
+      ...(config.nativeSession?.mode === "resume"
+        ? ["--session", config.nativeSession.thread.threadId]
+        : [])
     ],
     env: {
       OPENCODE_CONFIG: file,
@@ -303,7 +355,15 @@ export async function invocation(config, start, root = "/tmp/sandlane-harness") 
       OPENCODE_DISABLE_CLAUDE_CODE: "1",
       OPENCODE_DISABLE_TERMINAL_TITLE: "1",
       OPENCODE_PERMISSION: JSON.stringify({ "*": "deny", [toolPattern]: "allow" })
-    }
+    },
+    ...(config.nativeSession
+      ? {
+          expectedVersion: "1.19.5",
+          nativeThread:
+            config.nativeSession.mode === "resume" ? config.nativeSession.thread : undefined,
+          nativeRoot: "/home/runner/.local/state/opencode/sandlane/native"
+        }
+      : {})
   };
 }
 
@@ -316,17 +376,118 @@ function childEnvironment(additions) {
   return { ...env, ...additions };
 }
 
+async function collect(command, args, env, limit = STATE_LIMIT) {
+  const child = spawn(command, args, {
+    cwd: "/workspace",
+    env: childEnvironment(env),
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  const chunks = [];
+  let bytes = 0;
+  let exceeded = false;
+  child.stdout.on("data", chunk => {
+    bytes += chunk.length;
+    if (bytes > limit) {
+      exceeded = true;
+      child.kill("SIGKILL");
+    } else chunks.push(Buffer.from(chunk));
+  });
+  child.stderr.resume();
+  const code = await new Promise(resolve => {
+    child.once("error", () => resolve(125));
+    child.once("exit", value => resolve(Number.isSafeInteger(value) ? value : 125));
+  });
+  return { code, stdout: Buffer.concat(chunks), exceeded };
+}
+
+async function verifyVersion(launch) {
+  if (!launch.expectedVersion) return;
+  const result = await collect(launch.command, ["--version"], launch.env, 4096);
+  const version = result.stdout.toString("utf8").trim().replace(/^v/, "");
+  if (result.code !== 0 || result.exceeded || version !== launch.expectedVersion)
+    throw new Error("SHIM_VERSION");
+}
+
+function opencodeSessionTracker() {
+  let buffer = Buffer.alloc(0);
+  let sessionId;
+  let invalid = false;
+  const inspect = (value, depth = 0) => {
+    if (depth > 4 || !value || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "sessionID" && typeof child === "string" && OPENCODE_ID.test(child)) {
+        if (sessionId && sessionId !== child) invalid = true;
+        sessionId = child;
+      } else inspect(child, depth + 1);
+    }
+  };
+  return {
+    consume(chunk) {
+      buffer = Buffer.concat([buffer, chunk]);
+      let newline;
+      while ((newline = buffer.indexOf(10)) >= 0) {
+        const line = buffer.subarray(0, newline).toString("utf8");
+        buffer = buffer.subarray(newline + 1);
+        try {
+          inspect(JSON.parse(line));
+        } catch {}
+      }
+      if (buffer.length > STATE_LIMIT) {
+        invalid = true;
+        buffer = Buffer.alloc(0);
+      }
+    },
+    id() {
+      return invalid ? undefined : sessionId;
+    }
+  };
+}
+
+async function prepareNative(launch) {
+  await verifyVersion(launch);
+  if (launch.nativeThread?.kind !== "opencode-export-v1") return;
+  const imported = await collect(launch.command, ["import", launch.nativeThread.path], launch.env);
+  if (imported.code !== 0 || imported.exceeded) throw new Error("SHIM_IMPORT");
+}
+
+async function finishNative(launch, tracker) {
+  if (launch.nativeThread?.kind === "qwen-session-v1") return launch.nativeThread;
+  if (!launch.nativeRoot) return undefined;
+  const sessionId = tracker.id();
+  if (!sessionId || (launch.nativeThread && launch.nativeThread.threadId !== sessionId))
+    throw new Error("SHIM_SESSION");
+  const exported = await collect(launch.command, ["export", sessionId], launch.env);
+  if (exported.code !== 0 || exported.exceeded || !exported.stdout.length)
+    throw new Error("SHIM_EXPORT");
+  JSON.parse(exported.stdout.toString("utf8"));
+  await mkdir(launch.nativeRoot, { recursive: true, mode: 0o700 });
+  const path = `${launch.nativeRoot}/${sessionId}.json`;
+  const pending = `${path}.pending`;
+  try {
+    await writeFile(pending, exported.stdout, { mode: 0o600, flag: "wx" });
+    await chmod(pending, 0o600);
+    await rename(pending, path);
+  } catch (error) {
+    await rm(pending, { force: true }).catch(() => {});
+    throw error;
+  }
+  return { kind: "opencode-export-v1", threadId: sessionId, path };
+}
+
 export async function main() {
   let code = 125;
   let phase = "configuration";
   let endedWithNewline = true;
+  let nativeThread;
   try {
     const config = environment();
     phase = "start-frame";
     const start = await oneLine(process.stdin);
     phase = "invocation";
     const launch = await invocation(config, start, MANAGED_ROOTS[config.harness]);
+    await prepareNative(launch);
     phase = "spawn";
+    const tracker = opencodeSessionTracker();
     const child = spawn(launch.command, launch.args, {
       cwd: "/workspace",
       env: childEnvironment(launch.env),
@@ -335,6 +496,7 @@ export async function main() {
     phase = "child";
     child.stdout.on("data", chunk => {
       const bytes = Buffer.from(chunk);
+      if (config.harness === "opencode" && config.nativeSession) tracker.consume(bytes);
       if (bytes.length) endedWithNewline = bytes[bytes.length - 1] === 10;
       process.stdout.write(bytes);
     });
@@ -345,12 +507,21 @@ export async function main() {
       child.once("error", () => resolve(125));
       child.once("exit", value => resolve(Number.isSafeInteger(value) ? value : 125));
     });
+    if (code === 0 && config.nativeSession) nativeThread = await finishNative(launch, tracker);
   } catch {
     code = 125;
   }
   if (!endedWithNewline) process.stdout.write("\n");
   process.stdout.write(
-    `${JSON.stringify({ _sandlane: { schemaVersion: 1, event: "exit", code, phase } })}\n`
+    `${JSON.stringify({
+      _sandlane: {
+        schemaVersion: 1,
+        event: "exit",
+        code,
+        phase,
+        ...(code === 0 && nativeThread ? { nativeSession: nativeThread } : {})
+      }
+    })}\n`
   );
   process.exitCode = code;
 }

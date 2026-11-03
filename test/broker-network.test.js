@@ -21,6 +21,7 @@ import path from "node:path";
 import os from "node:os";
 import http from "node:http";
 import { codexLauncher } from "../dist/harness/codex/codex-managed-config.js";
+import { qwenCodeLauncher } from "../dist/harness/qwen-code/qwen-code.js";
 import { SandboxBroker } from "../dist/sandbox/docker/lifecycle.js";
 import { BrokerError } from "../dist/sandbox/docker/contracts.js";
 import { verifyRelay, parseRelayBinding } from "../dist/sandbox/docker/relay-binding.js";
@@ -33,9 +34,13 @@ import { encodeNative, decodeNative, NATIVE_STATE_BYTES } from "../dist/common/n
 test("native state transfers are bounded, allocation-bound and only restore the original container", async t => {
   const { engine, broker, spec } = await setup(t, true, true);
   spec.session = { taskId: "task", memberId: "member" };
-  const record = await broker.allocateManaged({ spec, authorization: authorization(spec) });
+  const record = await broker.allocateManaged({
+    spec,
+    authorization: { ...authorization(spec), nativeSession: true }
+  });
   const threadId = "01234567-1234-1234-1234-123456789abc";
   const thread = {
+    kind: "codex-rollout-v1",
     threadId,
     path: `/home/runner/.codex/sessions/2026/11/03/rollout-2026-11-03T12-00-00-${threadId}.jsonl`
   };
@@ -62,7 +67,7 @@ test("native state transfers are bounded, allocation-bound and only restore the 
   const next = { ...spec, allocationId: "next", runId: "next" };
   const allocated = await broker.allocateManaged({
     spec: next,
-    authorization: authorization(next)
+    authorization: { ...authorization(next), nativeSession: true }
   });
   const body = (changes = {}) =>
     encodeNative({ ...result.header, ref: allocated.ref, ...changes }, result.data);
@@ -76,6 +81,41 @@ test("native state transfers are bounded, allocation-bound and only restore the 
   assert.equal(Buffer.concat(engine.stdin.at(-1)).toString(), "rollout");
   await broker.openChannel(allocated.ref, AbortSignal.timeout(1000));
   await assert.rejects(broker.putNativeState(body()), { code: "NATIVE_STATE_DENIED" });
+  await broker.shutdown();
+});
+
+test("native restore rewrites a non-Codex launch only after the bounded state is restored", async t => {
+  const { engine, broker, spec } = await setup(t, true, true, "qwen-code");
+  spec.session = { taskId: "task", memberId: "member" };
+  const first = await broker.allocateManaged({
+    spec,
+    authorization: { ...authorization(spec), nativeSession: true }
+  });
+  await broker.openChannel(first.ref, AbortSignal.timeout(1000));
+  const threadId = "01234567-1234-1234-1234-123456789abc";
+  const thread = {
+    kind: "qwen-session-v1",
+    threadId,
+    path: `/home/runner/.qwen/sandlane/projects/-workspace/chats/${threadId}.jsonl`
+  };
+  engine.reply = () => Buffer.from('{"session":"qwen"}\n');
+  const state = decodeNative(
+    Buffer.concat(await broker.getNativeState({ ref: first.ref, ...thread }))
+  );
+  await broker.terminate(first.ref);
+
+  const nextSpec = { ...spec, allocationId: "qwen-next", runId: "qwen-next" };
+  const next = await broker.allocateManaged({
+    spec: nextSpec,
+    authorization: { ...authorization(nextSpec), nativeSession: true }
+  });
+  const body = encodeNative({ ...state.header, ref: next.ref }, state.data);
+  assert.deepEqual(await broker.putNativeState(body), { restored: true });
+  await broker.openChannel(next.ref, AbortSignal.timeout(1000));
+  const native = engine.execs.at(-1).Env.find(value =>
+    value.startsWith("SANDLANE_NATIVE_SESSION=")
+  );
+  assert.deepEqual(JSON.parse(native.slice("SANDLANE_NATIVE_SESSION=".length)), thread);
   await broker.shutdown();
 });
 
@@ -304,13 +344,18 @@ test("session identity includes user and member; idle resources are bounded and 
   assert.equal(engine.networks.size, 0);
 });
 
-async function setup(t, withRelay = false, managed = false) {
+async function setup(t, withRelay = false, managed = false, harness = "codex") {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "sandlane-network-ledger-"));
   t.after(() => rm(stateDir, { recursive: true, force: true }));
   const engine = new Engine();
   const config = {
     nodeId: "node",
-    harnesses: { codex: { image: `fixture@sha256:${"a".repeat(64)}`, launcher: codexLauncher } },
+    harnesses: {
+      [harness]: {
+        image: `fixture@sha256:${"a".repeat(64)}`,
+        launcher: harness === "qwen-code" ? qwenCodeLauncher : codexLauncher
+      }
+    },
     stateDir,
     maxConcurrent: 2,
     perTenant: 1,
@@ -332,7 +377,7 @@ async function setup(t, withRelay = false, managed = false) {
   await broker.init();
   const spec = {
     schemaVersion: 2,
-    harness: "codex",
+    harness,
     allocationId: "a",
     tenantId: "tenant",
     userId: "user",

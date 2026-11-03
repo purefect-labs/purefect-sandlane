@@ -201,10 +201,11 @@ Broker 只在 Linux 运行。镜像未配置、未固定 digest 或 harness 未�
 每项只能包含 `listenHost`、`listenPort`、`upstreamHost`、`upstreamPort`。Relay 只转发配置好的
 TCP 目的地，不读取 Run capability、Provider key 或 Purefect token。
 
-## 状态面板与记忆
+## 原生会话、状态面板与记忆
 
-`SANDLANE_NATIVE_SESSIONS=true` 可开启实验性的 Codex 0.154.0 原生会话复用，默认关闭。
-需同时更新 Worker 与 Broker；支持范围、缓存限制及降级规则见[原生会话复用](./native-sessions.md)。
+`SANDLANE_NATIVE_SESSIONS=true` 可开启实验性的 CLI 原生会话复用，默认关闭。固定支持 Codex
+0.154.0、Claude Code 2.1.301、Qwen Code 0.26.3 和 OpenCode 1.19.5。需同时更新 Worker 与 Broker；
+支持范围、版本失败语义、缓存限制及降级规则见[原生会话复用](./native-sessions.md)。
 
 状态面板默认关闭；设置 `SANDLANE_STATUS_PORT` 后启用。`SANDLANE_STATUS_BIND` 默认
 `127.0.0.1`，`SANDLANE_STATUS_RUN_IDS` 默认 `hash`，`SANDLANE_STATUS_RECENT_RUNS` 默认 50。

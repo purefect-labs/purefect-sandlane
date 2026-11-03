@@ -60,7 +60,8 @@ const init = (servers = [{ name: "tools", status: "connected" }]) =>
       : [],
     mcp_servers: servers,
     permissionMode: "dontAsk",
-    model: "sandlane"
+    model: "sandlane",
+    claude_code_version: mode === "bad-version" ? "2.1.302" : "2.1.301"
   });
 
 let streaming;

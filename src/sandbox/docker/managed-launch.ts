@@ -17,6 +17,7 @@ import { createHash } from "node:crypto";
 import { isIPv4 } from "node:net";
 import { BrokerError, exactKeys, object } from "./contracts.js";
 import type { HarnessLauncher } from "../../spi/harness.js";
+import type { NativeThread } from "../../common/native-session.js";
 
 export interface ManagedGatewayPolicy {
   modelBaseUrl: string;
@@ -33,6 +34,7 @@ export interface RunAuthorization extends ManagedModelSelection {
   /** File mode: the CLI also gets its file and command tools. Only for a session allocation
    * whose inputs were written before its CLI starts (the Broker enforces both). */
   fileTools?: true;
+  nativeSession?: true;
 }
 
 /** Requested model/tool subset, never a replacement for Gateway authorization. */
@@ -102,9 +104,12 @@ export function parseRunAuthorization(
       "enabledTools",
       "model",
       "tool",
-      ...(v.fileTools !== undefined ? ["fileTools"] : [])
+      ...(v.fileTools !== undefined ? ["fileTools"] : []),
+      ...(v.nativeSession !== undefined ? ["nativeSession"] : [])
     ]);
     if (v.fileTools !== undefined && v.fileTools !== true) throw Error();
+    if (v.nativeSession !== undefined && v.nativeSession !== true) throw Error();
+    if (v.fileTools && v.nativeSession) throw Error();
     const capability = (raw: unknown) => {
       const c = object(raw);
       exactKeys(c, ["value", "expiresAt"]);
@@ -130,7 +135,8 @@ export function parseRunAuthorization(
       ...selection,
       model,
       tool,
-      ...(v.fileTools === true ? { fileTools: true as const } : {})
+      ...(v.fileTools === true ? { fileTools: true as const } : {}),
+      ...(v.nativeSession === true ? { nativeSession: true as const } : {})
     });
   } catch {
     throw new BrokerError("INVALID_RUN_AUTHORIZATION", 400, "Invalid scoped Run authorization");
@@ -155,17 +161,19 @@ export function managedLaunch(
 ) {
   if (!isIPv4(relayIp))
     throw new BrokerError("INVALID_RELAY_ADDRESS", 503, "Relay IPv4 address unavailable");
-  const config = harness.configure({
+  const configured = harness.configure({
     ...policy,
     modelAlias: authorization.modelAlias,
     toolServer: authorization.toolServer,
     enabledTools: authorization.enabledTools,
     modelCapability: authorization.model.value,
     toolCapability: authorization.tool.value,
-    ...(authorization.fileTools ? { fileTools: true } : {})
+    ...(authorization.fileTools ? { fileTools: true } : {}),
+    ...(authorization.nativeSession ? { nativeSession: true } : {})
   });
-  return {
+  const materialize = (config: ReturnType<HarnessLauncher["configure"]>) => ({
     fileTools: authorization.fileTools === true,
+    nativeSession: authorization.nativeSession === true,
     args: config.args,
     env: [
       ...Object.entries(config.env).map(([key, value]) => `${key}=${value}`),
@@ -176,6 +184,9 @@ export function managedLaunch(
     // to the Relay endpoint in this allocation's own private network.
     extraHosts: [
       ...new Set([policy.modelBaseUrl, policy.mcpUrl].map(url => new URL(url).hostname))
-    ].map(host => `${host}:${relayIp}`)
-  };
+    ].map(host => `${host}:${relayIp}`),
+    resume: (thread: NativeThread) =>
+      harness.resume ? materialize(harness.resume(config, thread)) : undefined
+  });
+  return materialize(configured);
 }

@@ -19,6 +19,8 @@ import {
   encodeNative,
   nativeSnapshot,
   nativeThread,
+  nativeKindForHarness,
+  NATIVE_STATE_KINDS,
   NATIVE_STATE_BYTES
 } from "../../common/native-session.js";
 import { nativeCommand } from "./session-native.js";
@@ -152,6 +154,7 @@ function validHarness(harness: HarnessLauncher | undefined): boolean {
   return (
     !!harness &&
     typeof harness.configure === "function" &&
+    (harness.resume === undefined || typeof harness.resume === "function") &&
     absolute(harness.command) &&
     Array.isArray(harness.args) &&
     harness.args.every(arg => typeof arg === "string") &&
@@ -279,6 +282,7 @@ export class SandboxBroker {
       harnesses: Object.keys(this.config.harnesses),
       managedLaunch: this.config.managedGateways !== undefined,
       nativeState: "codex-rollout-v1",
+      nativeStates: NATIVE_STATE_KINDS,
       modelAccess: false,
       businessMcp: false
     };
@@ -853,12 +857,15 @@ export class SandboxBroker {
     return this.serial(async () => {
       if (!this.ready || !this.healthy) throw new BrokerError("NOT_READY", 503, "Broker not ready");
       const record = this.bound(ref);
+      const expectedKind = nativeKindForHarness(record.harness);
       if (
-        record.harness !== "codex" ||
+        expectedKind === undefined ||
+        snapshot.kind !== expectedKind ||
         !record.sessionKey ||
         record.state !== "allocating" ||
         record.channelOpened ||
         executionDeadline(record) <= this.clock() ||
+        !this.sessionLaunches.get(ref.allocationId)?.nativeSession ||
         this.sessionLaunches.get(ref.allocationId)?.fileTools
       )
         throw new BrokerError("NATIVE_STATE_DENIED", 409, "Native restore unavailable");
@@ -884,6 +891,13 @@ export class SandboxBroker {
         AbortSignal.timeout(Math.max(1, deadline - this.clock())),
         nativeCommand(snapshot, true)
       );
+      if (record.harness !== "codex") {
+        const current = this.sessionLaunches.get(ref.allocationId);
+        const resumed = current?.resume(snapshot);
+        if (!resumed)
+          throw new BrokerError("NATIVE_STATE_DENIED", 409, "Harness cannot resume native state");
+        this.sessionLaunches.set(ref.allocationId, resumed);
+      }
       return { restored: true };
     });
   }
@@ -891,14 +905,16 @@ export class SandboxBroker {
   /** Copy a single approved rollout before stop; the caller has already closed Run access. */
   async getNativeState(value: unknown): Promise<Buffer[]> {
     const input = object(value);
-    exactKeys(input, ["ref", "threadId", "path"]);
+    exactKeys(input, ["ref", "kind", "threadId", "path"]);
     const ref = parseRef(input.ref),
       thread = nativeThread(input);
     const target = await this.serial(async () => {
       if (!this.ready || !this.healthy) throw new BrokerError("NOT_READY", 503, "Broker not ready");
       const record = this.bound(ref);
+      const expectedKind = nativeKindForHarness(record.harness);
       if (
-        record.harness !== "codex" ||
+        expectedKind === undefined ||
+        thread.kind !== expectedKind ||
         !record.sessionKey ||
         record.state !== "running" ||
         executionDeadline(record) <= this.clock() ||

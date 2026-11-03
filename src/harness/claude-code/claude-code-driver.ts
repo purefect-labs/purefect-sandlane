@@ -33,6 +33,7 @@ import type {
   RuntimeEvent
 } from "../../spi/harness.js";
 import { CLAUDE_CODE_WEB_FUNCTIONS } from "./claude-code-launcher.js";
+import { nativeThreadPath, type NativeThread } from "../../common/native-session.js";
 
 /** Speaks Anthropic Messages to the model gateway; tools (the client action included) come from
  * the tool gateway over MCP. */
@@ -41,7 +42,7 @@ export const CLAUDE_CODE_CAPABILITIES: HarnessCapabilities = Object.freeze({
   streamingText: true,
   interactiveInput: false,
   approvalBridge: false,
-  nativeResume: false,
+  nativeResume: true,
   modelWire: "anthropic-messages",
   sessionPolicy: "ephemeral"
 });
@@ -95,6 +96,8 @@ export class ClaudeCodeDriver extends EventEmitter implements HarnessDriver {
   private finished: (() => void) | undefined;
   private disposal: Promise<void> | undefined;
   private stopped: ProcessStopEvidence | undefined;
+  private nativeThread: NativeThread | undefined;
+  private completedSuccessfully = false;
 
   constructor(options: ClaudeCodeDriverOptions) {
     super();
@@ -134,7 +137,11 @@ export class ClaudeCodeDriver extends EventEmitter implements HarnessDriver {
       (effort !== undefined && !EFFORTS.includes(effort))
     )
       throw new Error("Invalid Run input or deadline");
-    const turn = managedTurnInput(input.prompt, parsePromptFormat(input.promptFormat));
+    const resume = input.nativeSession?.resume;
+    const turn = managedTurnInput(
+      resume ? input.nativeSession!.prompt : input.prompt,
+      parsePromptFormat(resume ? input.nativeSession!.promptFormat : input.promptFormat)
+    );
     if (
       input.contextData &&
       (!Array.isArray(input.contextData) ||
@@ -202,6 +209,13 @@ export class ClaudeCodeDriver extends EventEmitter implements HarnessDriver {
       this.fail(error instanceof Error ? error : new Error("Harness failure"));
     } finally {
       clearTimeout(deadline);
+      if (this.nativeThread && this.completedSuccessfully && !this.cancelled) {
+        try {
+          await this.input?.nativeSession?.capture(this.nativeThread);
+        } catch {
+          /* Native state is an optional optimization. */
+        }
+      }
       await this.dispose();
       this.timing("process-stopped");
     }
@@ -448,6 +462,28 @@ export class ClaudeCodeDriver extends EventEmitter implements HarnessDriver {
         this.fail(new Error("Unexpected Harness session"));
         return;
       }
+      if (this.input?.nativeSession) {
+        if (line.claude_code_version !== "2.1.301" || typeof line.session_id !== "string") {
+          this.timing("native-version-rejected");
+          this.fail(new Error("Unsupported native Claude Code session"));
+          return;
+        }
+        try {
+          const thread = nativeThreadPath("claude-session-v1", line.session_id);
+          const resume = this.input.nativeSession.resume;
+          if (
+            resume &&
+            (resume.kind !== thread.kind ||
+              resume.threadId !== thread.threadId ||
+              resume.path !== thread.path)
+          )
+            throw new Error("Native thread mismatch");
+          this.nativeThread = thread;
+        } catch {
+          this.fail(new Error("Invalid native Claude Code session"));
+          return;
+        }
+      }
       this.timing("session-ready");
     } else if (line.subtype === "api_retry") this.timing("model-retry");
   }
@@ -515,8 +551,10 @@ export class ClaudeCodeDriver extends EventEmitter implements HarnessDriver {
     }
     const usage = usageOf(line.usage);
     const data = usage ? { usage } : {};
-    if (line.subtype === "success" && line.is_error !== true) this.end("run.completed", data);
-    else
+    if (line.subtype === "success" && line.is_error !== true) {
+      this.completedSuccessfully = true;
+      this.end("run.completed", data);
+    } else
       this.end("run.failed", {
         ...data,
         // The CLI's own classification (e.g. api_error, max_turns); never its message text.

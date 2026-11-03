@@ -50,7 +50,8 @@ sudo install -m 0600 deploy/compose.server.example.yaml /etc/sandlane/compose.se
 ```
 
 `runtime.env` 的占位值必须全部替换。`SANDLANE_WORKER_IP` 与 `SANDLANE_RELAY_IP` 必须位于 managed
-subnet 且互不相同；节点 overlay 显式固定 Relay IP，避免 Relay 先启动时占用 Worker 的地址。
+subnet 且互不相同；节点 overlay 显式固定 Relay IP，避免 Relay 先启动时占用 Worker 的地址。模板中的
+`SANDLANE_NATIVE_SESSIONS=false` 应保留到普通 Run 验收完成，再按[原生会话复用](../native-sessions.md)开启。
 
 真实 Secret、TLS 私钥可以由 `compose.server.yaml` 从节点受限路径挂载，但不得写入这些普通参数、
 仓库或命令行。准备好镜像、证书、Secret、PurefectClient 和 `runtime.env` 后，日常入口只有：
@@ -115,6 +116,7 @@ Relay 重建后必须重新核对身份，并先让旧绑定完成旧 Run 网络
 
 升级候选 Worker 前至少验证两种 Harness 的提交、事件、结算和取消，以及工具权限拒绝。
 同时按启用的功能验证文件输入/输出、页面动作、审批、任务委派、成员指导和 memory/status。
+启用原生会话复用时，还要验证连续 Run 命中、开关关闭后的平台历史冷启动和所用 CLI 的固定版本。
 契约 schema 一致、单元测试或独立 fixture 通过，均不能单独证明实际平台链路正常。
 
 使用隔离队列或受控测试窗口，避免新旧 Worker 抢走测试作业。保留上一镜像 digest 与配置，

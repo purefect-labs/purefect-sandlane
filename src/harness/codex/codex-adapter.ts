@@ -182,7 +182,7 @@ export class CodexRunAdapter extends EventEmitter implements HarnessDriver {
       if (native && this.input.fileTools) throw new Error("Native file sessions unsupported");
       const resume = native?.resume;
       const result = (await this.request(resume ? "thread/resume" : "thread/start", {
-        ...(resume ? { threadId: nativeThread(resume).threadId } : {}),
+        ...(resume ? { threadId: nativeThread(resume, "codex-rollout-v1").threadId } : {}),
         cwd: this.workspace,
         ...(!resume ? { ephemeral: !native } : {}),
         ...(native
@@ -197,7 +197,11 @@ export class CodexRunAdapter extends EventEmitter implements HarnessDriver {
       })) as { thread?: { id?: string; path?: string } };
       if (!result.thread?.id) throw new Error("Missing thread ID");
       if (native) {
-        thread = nativeThread({ threadId: result.thread.id, path: result.thread.path });
+        thread = nativeThread({
+          kind: "codex-rollout-v1",
+          threadId: result.thread.id,
+          path: result.thread.path
+        });
         if (resume && (thread.threadId !== resume.threadId || thread.path !== resume.path))
           throw new Error("Native thread mismatch");
       }

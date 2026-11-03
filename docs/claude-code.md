@@ -23,9 +23,9 @@ SandLane 可以用 Anthropic Claude Code CLI（实测版本 2.1.301）代替 Cod
 
 - 每个 Run 一个 `claude -p` 进程（stream-json 双向流，`sessionPolicy: ephemeral`）。参数由
   `src/harness/claude-code/claude-code-launcher.ts` 生成，Broker 只按镜像映射启动、不理解 CLI：
-  `--input-format stream-json --output-format stream-json --verbose --include-partial-messages --restricted
-  --tools WebSearch --strict-mcp-config --mcp-config <工具网关> --permission-mode dontAsk
-  --allowedTools WebSearch,<本 Run 的工具> --no-session-persistence --model <别名>`。
+  `--input-format stream-json --output-format stream-json --verbose --include-partial-messages --restricted --tools WebSearch --strict-mcp-config --mcp-config <工具网关> --permission-mode dontAsk --allowedTools WebSearch,<本 Run 的工具> --no-session-persistence --model <别名>`。开启
+  [原生会话复用](./native-sessions.md)时，仅移除 `--no-session-persistence` 并在命中时增加
+  `--resume`；每轮仍是新进程和新 capability。
   - 不用 `--bare`（2026-10-16 起）：它把内置工具限制为 Bash/Edit/Read，WebSearch 不可用（实测）。改由 `--restricted`
     忽略用户、项目、本地设置文件（含 hooks），`CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` / `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`
     关闭 CLAUDE.md 与 auto-memory；print 模式下设置了 `ANTHROPIC_API_KEY` 时 CLI 用它以 `x-api-key` 发送本 Run 的模型

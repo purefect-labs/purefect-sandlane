@@ -172,7 +172,7 @@ npm test
 - [工具与页面动作](./docs/tools-and-page-actions.md)
 - [状态面板](./docs/status-panel.md)
 - [记忆接入](./docs/memory.md)
-- [Codex 原生会话复用](./docs/native-sessions.md)（实验性，默认关闭）
+- [CLI 原生会话复用](./docs/native-sessions.md)（Codex、Claude Code、Qwen Code、OpenCode；实验性，默认关闭）
 - [安全说明](./SECURITY.md)
 - [开发与贡献](./CONTRIBUTING.md)
 

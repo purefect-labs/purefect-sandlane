@@ -30,6 +30,7 @@ SandLane provides the execution-layer building blocks needed when a control plan
 - Run-scoped access to approved models and MCP tools
 - Separation of provider credentials and user tokens from sandboxed processes
 - Lease-aware cancellation, cleanup, and capacity control
+- Optional bounded native conversation continuity across fresh CLI processes for all four built-in Harnesses
 - A control-plane-neutral runtime composition API
 - A ready-made integration for the Purefect control plane
 
@@ -175,7 +176,7 @@ Detailed operational documentation is currently available in Simplified Chinese:
 - [Tools and page actions](./docs/tools-and-page-actions.md)
 - [Status panel](./docs/status-panel.md)
 - [Memory integration](./docs/memory.md)
-- [Native Codex session reuse](./docs/native-sessions.md) (experimental, opt-in)
+- [Native CLI session reuse](./docs/native-sessions.md) (Codex, Claude Code, Qwen Code, and OpenCode; experimental, opt-in)
 - [Security](./SECURITY.md)
 - [Development and contributing](./CONTRIBUTING.md)
 

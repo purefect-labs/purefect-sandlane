@@ -11,10 +11,14 @@ upgrading.
 
 ### Added
 
-- Opt-in native Codex 0.154.0 conversation reuse with a bounded, Worker-local rollout cache,
-  fresh per-Run processes and credentials, and fallback to platform history on cache misses.
+- Opt-in native conversation reuse for Codex 0.154.0, Claude Code 2.1.301, Qwen Code 0.26.3,
+  and OpenCode 1.19.5, with bounded Worker-local state, fresh per-Run processes and credentials,
+  and fallback to platform history on cache misses or unavailable state.
+- Harness-bound state validation, old-Broker capability negotiation, and fail-closed fixed-version
+  checks; OpenCode uses its official export/import path rather than copying its database.
 - An isolated Docker validation probe for native resume, tool history, configuration overrides,
-  and compaction through the SandLane model gateway (`npm run native:check`).
+  and Codex compaction through the SandLane model gateway (`npm run native:check`), plus fixture-backed
+  two-process resume validation for Claude Code, Qwen Code, and OpenCode.
 
 ## [0.1.1] - 2026-10-29
 

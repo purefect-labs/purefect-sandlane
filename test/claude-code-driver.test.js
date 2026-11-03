@@ -197,6 +197,7 @@ test("capabilities: Anthropic Messages, ephemeral; tools only through the gatewa
   // The page tool is an MCP tool of the gateway like any other: no Driver-side tool bridge.
   assert.equal("clientActions" in CLAUDE_CODE_CAPABILITIES, false);
   assert.equal(CLAUDE_CODE_CAPABILITIES.sessionPolicy, "ephemeral");
+  assert.equal(CLAUDE_CODE_CAPABILITIES.nativeResume, true);
   assert.throws(() => new ClaudeCodeDriver({ transport: {}, reasoningEffort: "max" }));
 });
 
@@ -238,6 +239,15 @@ test("launch description: gateway-only CLI, capabilities in the environment, mod
     SANDLANE_TOOL_CAPABILITY: config.toolCapability
   });
   assert.ok(!launch.args.join(" ").includes("t".repeat(43)), "no capability in argv");
+  const native = claudeCodeLaunch({ ...config, nativeSession: true });
+  assert.equal(native.args.includes("--no-session-persistence"), false);
+  const nativeThread = {
+    kind: "claude-session-v1",
+    threadId: "01234567-1234-1234-1234-123456789abc",
+    path: "/home/runner/.claude/projects/-workspace/01234567-1234-1234-1234-123456789abc.jsonl"
+  };
+  const resumed = claudeCodeLauncher.resume(native, nativeThread);
+  assert.deepEqual(resumed.args.slice(-2), ["--resume", nativeThread.threadId]);
   assert.deepEqual(claudeCodeLauncher.stateDirs, ["/home/runner/.claude"]);
   for (const name of [
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
@@ -259,4 +269,48 @@ test("launch description: gateway-only CLI, capabilities in the environment, mod
     { toolServer: "bad server" }
   ])
     assert.throws(() => claudeCodeLaunch({ ...config, ...change }), /Claude Code configuration/);
+});
+
+test("native Claude session resumes only the current turn and captures before process stop", async t => {
+  const { driver, events, log } = await fake(t, "text");
+  const id = "00000000-0000-4000-8000-000000000000";
+  const thread = {
+    kind: "claude-session-v1",
+    threadId: id,
+    path: `/home/runner/.claude/projects/-workspace/${id}.jsonl`
+  };
+  let captured;
+  await driver.execute(
+    input({
+      prompt: "full platform history",
+      nativeSession: {
+        resume: thread,
+        prompt: "current question",
+        promptFormat: "text",
+        capture: async value => {
+          assert.equal(driver.stopEvidence, undefined);
+          captured = value;
+        }
+      }
+    })
+  );
+  assert.deepEqual(captured, thread);
+  assert.equal(events.at(-1).type, "run.completed");
+  const user = (await log()).find(line => line.type === "user");
+  assert.equal(user.message.content.at(-1).text, "current question");
+  assert.ok(!JSON.stringify(user).includes("full platform history"));
+});
+
+test("native Claude session rejects an unvalidated version without capture", async t => {
+  const { driver, events } = await fake(t, "bad-version");
+  await driver.execute(
+    input({
+      nativeSession: {
+        prompt: "current",
+        promptFormat: "text",
+        capture: async () => assert.fail("must not capture")
+      }
+    })
+  );
+  assert.equal(events.at(-1).type, "run.failed");
 });

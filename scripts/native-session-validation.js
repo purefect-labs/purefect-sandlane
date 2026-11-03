@@ -332,7 +332,7 @@ try {
     for (const token of [user.model, user.tool])
       assert.ok(!afterExit.includes(token), "Capability in rollout");
   report.checks.noLiteralCapabilityInRollout = true;
-  const stateThread = { threadId, path: rollout[0] };
+  const stateThread = { kind: "codex-rollout-v1", threadId, path: rollout[0] };
   const processes = new SessionProcesses(docker);
   const exportState = async () => {
     const result = await processes.read(

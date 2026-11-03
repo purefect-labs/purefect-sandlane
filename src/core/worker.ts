@@ -52,7 +52,7 @@ import { deliverOutputs } from "./output-files.js";
 import { ManagedCliExecution } from "./managed-cli-execution.js";
 import { FrozenInputContext, executionTurnInput } from "./turn-input.js";
 import { createHash } from "node:crypto";
-import type { NativeSnapshot } from "../common/native-session.js";
+import { nativeKindForHarness, type NativeSnapshot } from "../common/native-session.js";
 import type { NativeCacheUse, NativeSessionCache } from "./native-session-cache.js";
 
 export type LaneLog = (code: string, fields?: Readonly<Record<string, string | number>>) => void;
@@ -823,7 +823,7 @@ class RunExecution {
       cache &&
       this.control.serialAppendOnlyConversations === true &&
       settings.context.nativeSessionSafe === true &&
-      lease.run.harness === "codex" &&
+      nativeKindForHarness(lease.run.harness) !== undefined &&
       lease.run.source?.type === "conversation" &&
       lease.run.run_no !== undefined &&
       !fileTools

@@ -41,6 +41,8 @@ docker compose --env-file /absolute/path/runtime.env \
 必须先填写参考集成要求的环境变量。此命令仅检查配置，不启动或修改现有部署。
 配置准备完成后，推荐使用 `npm run server -- up` 和 `npm run server -- doctor`，由统一入口按安全顺序
 处理 init、Relay binding、Broker 与 Worker；展开的 Compose 命令仍保留在参考集成中用于审计和恢复。
+模板默认关闭 `SANDLANE_NATIVE_SESSIONS`；普通 Run 验收后再按[原生会话复用](../docs/native-sessions.md)
+启用，升级 CLI 时也按该文档的固定版本边界重新验证。
 Compose相对宿主路径按第一个清单所在的`deploy/`解析；Secret、客户端目录和自定义overlay挂载推荐使用绝对路径。
 基础清单的`build.context: ..`指向仓库根目录，不需要另外指定`--project-directory`。
 项目名和既有命名卷保持原定义；文件移动不会替你迁移或重启现有节点。

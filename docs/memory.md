@@ -1,6 +1,6 @@
 # 会话上下文与可选记忆接口
 
-会话回放不依赖向量库或长期记忆服务。默认恢复平台提供的用户问题与最终回答；可选的 [Codex 原生会话复用](native-sessions.md)在连续会话中保留受限的原生工具历史，默认关闭。
+会话回放不依赖向量库或长期记忆服务。默认恢复平台提供的用户问题与最终回答；可选的 [CLI 原生会话复用](native-sessions.md)在连续会话中保留受限的原生工具历史，默认关闭。
 
 第二批更新：已增加可选SQLite个人记忆及持久后台摘要，配置和规则见[精简记忆手册](memory-lite.md)。尚未启用共享Host或配置真实摘要模型。
 
@@ -18,7 +18,13 @@
     "beforeRun": 2,
     "omittedTurns": 0,
     "turns": [
-      {"run": 1, "status": "COMPLETED", "user": "代号 BLUE-42", "assistant": "已记下", "truncated": false}
+      {
+        "run": 1,
+        "status": "COMPLETED",
+        "user": "代号 BLUE-42",
+        "assistant": "已记下",
+        "truncated": false
+      }
     ]
   }
 }

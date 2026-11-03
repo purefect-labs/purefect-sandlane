@@ -21,13 +21,14 @@ import type {
   HarnessTransport
 } from "../../spi/harness.js";
 import type { ReasoningEffort } from "../../spi/control-plane.js";
+import type { NativeThread } from "../../common/native-session.js";
 import {
   SingleShotDriver,
   type SingleShotEmitter,
   type SingleShotProtocol,
   type SingleShotTerminal
 } from "../single-shot/driver.js";
-import { singleShotManagedConfig } from "../single-shot/managed-config.js";
+import { singleShotManagedConfig, singleShotResume } from "../single-shot/managed-config.js";
 export { qwenCodeModelFunctions } from "../../common/builtin-harness.js";
 
 export const QWEN_CODE_CAPABILITIES: HarnessCapabilities = Object.freeze({
@@ -35,7 +36,7 @@ export const QWEN_CODE_CAPABILITIES: HarnessCapabilities = Object.freeze({
   streamingText: true,
   interactiveInput: false,
   approvalBridge: false,
-  nativeResume: false,
+  nativeResume: true,
   modelWire: "responses",
   sessionPolicy: "ephemeral"
 });
@@ -55,12 +56,16 @@ class QwenCodeProtocol implements SingleShotProtocol {
   readonly capabilities = QWEN_CODE_CAPABILITIES;
   private partialText = false;
   private readonly tools = new Set<string>();
+  private result: SingleShotTerminal | undefined;
 
   exited(code: number): SingleShotTerminal {
-    return {
-      type: "run.failed",
-      data: { code: code === 0 ? "HARNESS_TERMINAL_MISSING" : "HARNESS_PROCESS_FAILED" }
-    };
+    if (code !== 0) return { type: "run.failed", data: { code: "HARNESS_PROCESS_FAILED" } };
+    return (
+      this.result ?? {
+        type: "run.failed",
+        data: { code: "HARNESS_TERMINAL_MISSING" }
+      }
+    );
   }
 
   consume(value: Record<string, unknown>, emit: SingleShotEmitter): SingleShotTerminal | undefined {
@@ -139,10 +144,13 @@ class QwenCodeProtocol implements SingleShotProtocol {
       }
       return;
     }
-    if (value.type === "result")
-      return value.subtype === "success" && value.is_error === false
-        ? { type: "run.completed" }
-        : { type: "run.failed", data: { code: "QWEN_CODE_RESULT_ERROR" } };
+    if (value.type === "result") {
+      this.result =
+        value.subtype === "success" && value.is_error === false
+          ? { type: "run.completed" }
+          : { type: "run.failed", data: { code: "QWEN_CODE_RESULT_ERROR" } };
+      return;
+    }
     if (!["system", "control_request", "control_response"].includes(String(value.type)))
       throw new Error("Unknown Qwen Code frame");
   }
@@ -156,7 +164,7 @@ export interface QwenCodeDriverOptions {
 
 export class QwenCodeDriver extends SingleShotDriver {
   constructor(options: QwenCodeDriverOptions) {
-    super({ ...options, protocol: () => new QwenCodeProtocol() });
+    super({ ...options, nativeKind: "qwen-session-v1", protocol: () => new QwenCodeProtocol() });
   }
 }
 
@@ -168,5 +176,7 @@ export const qwenCodeLauncher: HarnessLauncher = Object.freeze({
   env: Object.freeze({ HOME: "/home/runner", QWEN_HOME }),
   stateDirs: Object.freeze([QWEN_HOME]),
   configure: (config: HarnessLaunchConfig): HarnessLaunch =>
-    singleShotManagedConfig("qwen-code", config)
+    singleShotManagedConfig("qwen-code", config),
+  resume: (launch: HarnessLaunch, thread: NativeThread) =>
+    singleShotResume("qwen-code", launch, thread)
 });

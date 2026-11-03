@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 import type { ReasoningEffort } from "../../spi/control-plane.js";
+import type { NativeThread } from "../../common/native-session.js";
 import type {
   HarnessCapabilities,
   HarnessLaunch,
@@ -27,7 +28,7 @@ import {
   type SingleShotProtocol,
   type SingleShotTerminal
 } from "../single-shot/driver.js";
-import { singleShotManagedConfig } from "../single-shot/managed-config.js";
+import { singleShotManagedConfig, singleShotResume } from "../single-shot/managed-config.js";
 export { openCodeModelFunctions } from "../../common/builtin-harness.js";
 
 export const OPENCODE_CAPABILITIES: HarnessCapabilities = Object.freeze({
@@ -35,7 +36,7 @@ export const OPENCODE_CAPABILITIES: HarnessCapabilities = Object.freeze({
   streamingText: false,
   interactiveInput: false,
   approvalBridge: false,
-  nativeResume: false,
+  nativeResume: true,
   modelWire: "responses",
   sessionPolicy: "ephemeral"
 });
@@ -104,7 +105,7 @@ export interface OpenCodeDriverOptions {
 
 export class OpenCodeDriver extends SingleShotDriver {
   constructor(options: OpenCodeDriverOptions) {
-    super({ ...options, protocol: () => new OpenCodeProtocol() });
+    super({ ...options, nativeKind: "opencode-export-v1", protocol: () => new OpenCodeProtocol() });
   }
 }
 
@@ -125,5 +126,7 @@ export const openCodeLauncher: HarnessLauncher = Object.freeze({
   }),
   stateDirs: Object.freeze([OPENCODE_STATE, OPENCODE_DATA, OPENCODE_CONFIG, OPENCODE_CACHE]),
   configure: (config: HarnessLaunchConfig): HarnessLaunch =>
-    singleShotManagedConfig("opencode", config)
+    singleShotManagedConfig("opencode", config),
+  resume: (launch: HarnessLaunch, thread: NativeThread) =>
+    singleShotResume("opencode", launch, thread)
 });

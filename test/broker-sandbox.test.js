@@ -28,6 +28,7 @@ test("native restore is optional on old Brokers, fences import errors and isolat
   );
   assert.equal(oldSession.nativeSession, undefined);
   assert.equal(old.calls[0].spec.session.memberId, "member-2");
+  assert.equal(old.calls[0].authorization.nativeSession, undefined);
   const fake = broker({
     status: async () => ({
       nodeId: "node-1",
@@ -54,6 +55,26 @@ test("native restore is optional on old Brokers, fences import errors and isolat
     AbortSignal.timeout(1000)
   );
   assert.equal(cold.nativeSession.resume, undefined);
+  assert.equal(fake.calls.find(call => call.op === "allocate").authorization.nativeSession, true);
+});
+
+test("native capability negotiation selects the Harness state kind", async () => {
+  const fake = broker({
+    status: async () => ({
+      nodeId: "node-1",
+      ready: true,
+      managedLaunch: true,
+      harnesses: ["qwen-code"],
+      nativeStates: ["qwen-session-v1"]
+    }),
+    putNativeState: async () => false
+  });
+  const driver = () => ({ dispose: async () => {}, capabilities: {} });
+  const session = await new BrokerSandboxLauncher(fake, "node-1", {
+    "qwen-code": driver
+  }).open(request({ harness: "qwen-code", nativeSession: true }), AbortSignal.timeout(1000));
+  assert.ok(session.nativeSession);
+  assert.equal(fake.calls[0].authorization.nativeSession, true);
 });
 function request(changes = {}) {
   const now = Date.now();

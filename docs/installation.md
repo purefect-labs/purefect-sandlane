@@ -83,6 +83,9 @@ node --env-file=.env.local dist/bin/worker.js
 不能同时设置内联值与 `_FILE`。Worker 的 Purefect service secret 与 Worker/Broker service token
 必须不同。具体变量见[配置参考](./configuration.md)。
 
+原生会话复用是可选功能。新部署先保持 `SANDLANE_NATIVE_SESSIONS=false`，确认 Worker、Broker 和所选
+CLI 的普通 Run 正常后再按[原生会话复用](./native-sessions.md)开启；不要用该开关代替平台历史回放。
+
 ## 4. 启动顺序
 
 内置 Compose 部署须同时使用 `deploy/compose.runtime.yaml` 和 `deploy/compose.purefect.yaml`。
@@ -147,5 +150,6 @@ npm test
 5. CLI 容器不能直连公网，只能在 isolated 模式经 Relay 到指定网关；
 6. SIGTERM 先 drain，超过 `SANDLANE_DRAIN_MS` 后取消剩余 Run；
 7. 启用状态面板时只发布到受控地址，并按需要配置访问 token。
+8. 启用原生会话复用时，同一会话的连续 Run 能命中；关闭开关或重启 Worker 后仍能按平台历史冷启动。
 
 不要用生产任务或生产凭据做破坏性验收。

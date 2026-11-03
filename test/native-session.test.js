@@ -18,6 +18,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { NativeSessionCache } from "../dist/core/native-session-cache.js";
 import {
+  nativeKindForHarness,
+  nativeThreadPath,
   nativeThread,
   nativeSnapshot,
   encodeNative,
@@ -28,6 +30,7 @@ import { CodexRunAdapter } from "../dist/harness/codex/codex-adapter.js";
 
 const threadId = "01234567-1234-1234-1234-123456789abc";
 const thread = {
+  kind: "codex-rollout-v1",
   threadId,
   path: "/home/runner/.codex/sessions/2026/11/03/rollout-2026-11-03T12-00-00-" + threadId + ".jsonl"
 };
@@ -121,6 +124,23 @@ test("native state codec rejects paths, links by path substitution, oversized an
   const encoded = encodeNative(thread, snapshot().data);
   assert.deepEqual(decodeNative(encoded).data, snapshot().data);
   assert.throws(() => decodeNative(encoded.subarray(0, 5)));
+  const variants = [
+    nativeThreadPath("claude-session-v1", threadId),
+    nativeThreadPath("qwen-session-v1", threadId),
+    nativeThreadPath("opencode-export-v1", "ses_0123456789abcdef")
+  ];
+  for (const value of variants) {
+    assert.deepEqual(nativeThread(value, value.kind), value);
+    assert.throws(() => nativeThread({ ...value, kind: "codex-rollout-v1" }));
+    assert.throws(() => nativeThread({ ...value, path: value.path + ".extra" }));
+  }
+  assert.deepEqual(["codex", "claude-code", "qwen-code", "opencode"].map(nativeKindForHarness), [
+    "codex-rollout-v1",
+    "claude-session-v1",
+    "qwen-session-v1",
+    "opencode-export-v1"
+  ]);
+  assert.equal(nativeKindForHarness("unknown"), undefined);
 });
 
 function transport({ resumeError = false, version = "0.154.0", fail = false } = {}) {

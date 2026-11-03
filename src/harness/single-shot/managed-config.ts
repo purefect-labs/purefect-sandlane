@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 import type { HarnessLaunch, HarnessLaunchConfig } from "../../spi/harness.js";
+import { nativeThread, type NativeThread } from "../../common/native-session.js";
 
 export type SingleShotHarness = "qwen-code" | "opencode";
 
@@ -65,10 +66,26 @@ export function singleShotManagedConfig(
         SANDLANE_MCP_URL: url(config.mcpUrl),
         SANDLANE_MCP_SERVER: config.toolServer,
         SANDLANE_MCP_CAPABILITY: config.toolCapability,
-        SANDLANE_MCP_TOOLS: JSON.stringify(config.enabledTools)
+        SANDLANE_MCP_TOOLS: JSON.stringify(config.enabledTools),
+        ...(config.nativeSession ? { SANDLANE_NATIVE_SESSION: "cold" } : {})
       }
     };
   } catch {
     throw new Error(`Invalid managed ${harness} configuration`);
   }
+}
+
+export function singleShotResume(
+  harness: SingleShotHarness,
+  launch: HarnessLaunch,
+  thread: NativeThread
+): HarnessLaunch {
+  const expected = harness === "qwen-code" ? "qwen-session-v1" : "opencode-export-v1";
+  return {
+    args: [...launch.args],
+    env: {
+      ...launch.env,
+      SANDLANE_NATIVE_SESSION: JSON.stringify(nativeThread(thread, expected))
+    }
+  };
 }

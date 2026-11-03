@@ -26,6 +26,7 @@ import { terminateAndVerify, type BrokerTransportBinding } from "./broker-transp
 import type { BrokerClient } from "./client.js";
 import { BrokerError, parseRunSpec, type AllocationRef } from "./contracts.js";
 import { parseRunAuthorization } from "./managed-launch.js";
+import { nativeKindForHarness } from "../../common/native-session.js";
 
 type Broker = Pick<
   BrokerClient,
@@ -80,6 +81,17 @@ export class BrokerSandboxLauncher implements SandboxProvider {
     // The Broker lists the Harnesses it has CLI images for; refuse before allocating.
     if (!Array.isArray(status.harnesses) || !status.harnesses.includes(request.harness))
       throw new Error(HARNESS_UNAVAILABLE);
+    const nativeKind = nativeKindForHarness(request.harness);
+    const advertised = Array.isArray(status.nativeStates)
+      ? status.nativeStates
+      : status.nativeState === "codex-rollout-v1"
+        ? [status.nativeState]
+        : [];
+    const nativeEnabled =
+      request.nativeSession === true &&
+      nativeKind !== undefined &&
+      !request.inputs?.length &&
+      advertised.includes(nativeKind);
     const spec = parseRunSpec({
       schemaVersion: 2,
       allocationId: request.allocationId,
@@ -106,7 +118,8 @@ export class BrokerSandboxLauncher implements SandboxProvider {
         model: { value: request.modelCapability, expiresAt: request.expiresAt },
         tool: { value: request.toolCapability, expiresAt: request.expiresAt },
         // File mode follows the inputs: the CLI gets its file tools only over written files.
-        ...(request.inputs?.length ? { fileTools: true } : {})
+        ...(request.inputs?.length ? { fileTools: true } : {}),
+        ...(nativeEnabled ? { nativeSession: true } : {})
       },
       request.expiresAt,
       Date.now()
@@ -135,11 +148,6 @@ export class BrokerSandboxLauncher implements SandboxProvider {
       await this.broker.terminate(ref, AbortSignal.timeout(10_000)).catch(() => {});
       throw new Error("SANDBOX_UNAVAILABLE");
     }
-    const nativeEnabled =
-      request.nativeSession === true &&
-      request.harness === "codex" &&
-      !request.inputs?.length &&
-      status.nativeState === "codex-rollout-v1";
     let restored = false;
     if (nativeEnabled && request.nativeState) {
       try {
@@ -221,6 +229,7 @@ export class BrokerSandboxLauncher implements SandboxProvider {
               ...(restored
                 ? {
                     resume: {
+                      kind: request.nativeState!.kind,
                       threadId: request.nativeState!.threadId,
                       path: request.nativeState!.path
                     }
