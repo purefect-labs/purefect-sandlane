@@ -487,13 +487,16 @@ test("instructions: read_skill is explained only when this Run offers it", () =>
   assert.match(apiInstructions(["read_skill"]), /^Purefect skills:/);
 });
 
-test("instructions: metadata is read through the runtime summary, never get_raw", () => {
+test("instructions: metadata is read through BaseMetaDomain, never the designer entry", () => {
   const text = apiInstructions(["purefect_call", "list_api_docs", "read_api_doc"]);
-  assert.match(text, /MetaManager::get_meta_summary \{"type":"domain"/);
+  assert.match(text, /pf\.basis\.meta\.BaseMetaDomain::get_meta_summary \{"type":"domain"/);
+  assert.match(text, /pf\.basis\.meta\.BaseMetaDomain::get_meta \{"type"/);
   assert.match(text, /use it first and as the default/);
-  // get_raw appears only in the prohibition, never as something to call.
+  // Ordinary members cannot call the designer Domain, not even the read services it inherits:
+  // it appears only in the prohibition, never as something to call.
+  assert.doesNotMatch(text, /MetaManager::/);
+  assert.match(text, /Do not read through pf\.designer\.meta\.MetaManager/);
   assert.deepEqual(text.match(/[\w:.]*get_raw\w*/g), ["get_raw", "get_raw_summary"]);
-  assert.match(text, /Do not use get_raw or get_raw_summary/);
 });
 
 test("instructions: confirmation rules only with a policy; failures are reported as returned", async () => {
