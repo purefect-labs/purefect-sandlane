@@ -148,17 +148,19 @@ const callDescription = [
   'Call any Purefect platform API. api_code format: "{domain}::{method}".',
   "Use list_api_docs then read_api_doc to discover APIs and their parameters.",
   "",
-  "Reading metadata (what a Domain/model/page offers): prefer the compact MetaManager::get_meta_summary",
-  "{type, code}; use MetaManager::get_meta (full, much larger) only for details the summary lacks.",
-  "get_raw/get_raw_summary are design-time APIs for",
+  "Reading metadata (what a Domain/model/page offers): prefer the compact",
+  "pf.basis.meta.BaseMetaDomain::get_meta_summary {type, code}; use BaseMetaDomain::get_meta (full, much",
+  "larger) only for details the summary lacks. pf.designer.meta.MetaManager extends BaseMetaDomain for",
+  "developers and needs designer permission: its get_raw/get_raw_summary are design-time APIs for",
   "changing metadata; do not use them just to read. Before any MetaManager::replace or create,",
   "read apis/meta/replace.md (full-replace rules; violations cause data loss).",
   "Before the first MetaManager::create, plan namespace and catalog (apis/meta/namespace-and-catalog.md):",
   "follow the module's existing catalog (load_cat), split by audience into authorization packages",
   "(<module>.<user-facing> / .admin / .worker / .data), one feature = one sub-package + sub-catalog; never dump flat.",
   "",
-  "Files/images: file and image fields store only pf-file:// refs (pf-platform-file:// for platform files), never URLs.",
-  '  For an external URL call pf.basis.tools.file.FileStorage::upload {"source_url":"https://...","model_code":...,"field_code":...}',
+  "Files/images: file and image fields take a pf-file:// ref (pf-platform-file:// for platform files) or a plain",
+  "  http(s) link stored as-is (not hosted). Fields with file_setting.allow_external_url=false take refs only:",
+  '  call pf.basis.tools.file.FileStorage::upload {"source_url":"https://...","model_code":...,"field_code":...}',
   "  and write the returned file_ref (see apis/file-storage/server-upload.md).",
   "",
   "Managed identity is fixed by the platform: calls run as the current user with that user's permissions. Identity/profile overrides are not supported; site selects another site of the same tenant.",
@@ -194,7 +196,7 @@ function purefectCall(): PurefectTool {
           type: "string",
           maxLength: 256,
           description:
-            'API code, e.g. "pf.designer.meta.MetaManager::get_meta_summary" or "blis.md.product::search"'
+            'API code, e.g. "pf.basis.meta.BaseMetaDomain::get_meta_summary" or "blis.md.product::search"'
         },
         params: {
           type: "object",

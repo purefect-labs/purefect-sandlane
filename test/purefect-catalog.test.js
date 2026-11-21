@@ -79,9 +79,11 @@ test('every Purefect tool is installed: one generic API call (may write), the re
   assert.deepEqual(PUREFECT_TOOL_NAMES, ['purefect_call', 'list_api_docs', 'read_api_doc', 'read_skill']);
   assert.ok(Object.isFrozen(f.installed.inventory.targets[0].tools[0]));
   assert.ok(!JSON.stringify(f.installed.inventory).includes(config.gateway));
-  // Business runs read metadata through the runtime summary; replace rules live in the doc.
+  // Business runs read metadata through BaseMetaDomain (open to members), not the designer entry;
+  // replace rules live in the doc.
   const call = f.installed.adapter.tools[0];
-  assert.match(call.description, /prefer the compact MetaManager::get_meta_summary/);
+  assert.match(call.description, /pf\.basis\.meta\.BaseMetaDomain::get_meta_summary \{type, code\}/);
+  assert.match(call.inputSchema.properties.api_code.description, /BaseMetaDomain::get_meta_summary/);
   assert.match(call.description, /read apis\/meta\/replace\.md/);
   assert.doesNotMatch(call.description, /get_raw first/);
   assert.match(call.inputSchema.properties.api_code.description, /get_meta_summary/);
